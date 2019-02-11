@@ -766,10 +766,10 @@ static t_stat ctc_show_queue_common(FILE *st, UNIT *uptr, int32 val,
     }
 
     /* If the card is not sysgen'ed, give up */
-    if (cio[cid].sysgen_s != CIO_SYSGEN) {
-        fprintf(st, "No card in slot %d, or card has not completed sysgen\n", cid);
-        return SCPE_ARG;
-    }
+    /* if (cio[cid].sysgen_s != CIO_SYSGEN) { */
+    /*     fprintf(st, "No card in slot %d, or card has not completed sysgen\n", cid); */
+    /*     return SCPE_ARG; */
+    /* } */
 
     if (rq) {
         ptr = cio[cid].rqp;

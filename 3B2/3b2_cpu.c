@@ -181,7 +181,7 @@ UNIT cpu_unit = { UDATA (NULL, UNIT_FIX|UNIT_BINK|UNIT_IDLE, MAXMEMSIZE) };
 #define UNIT_EXHALT     (1u << UNIT_V_EXHALT)
 
 const char *cio_names[8] = {
-    "", "*VOID*", "*VOID*", "PORTS",
+    "", "*VOID*", "NI", "PORTS",
     "*VOID*", "CTC", "*VOID*", "*VOID*"
 };
 
@@ -1822,8 +1822,8 @@ t_stat sim_instr(void)
                     cio[i].ipl == cpu_int_ipl &&
                     cio[i].ivec == cpu_int_vec) {
                     sim_debug(IO_DBG, &cpu_dev,
-                              "[%08x] [IRQ] Handling CIO interrupt for card %d\n",
-                              R[NUM_PC], i);
+                              "[%08x] [IRQ] Handling CIO interrupt for card %d ivec=%02x\n",
+                              R[NUM_PC], i, cpu_int_vec);
 
                     cio[i].intr = FALSE;
                 }

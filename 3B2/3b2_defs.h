@@ -78,6 +78,12 @@ noret __libc_longjmp (jmp_buf buf, int val);
 #define BYTE_MASK  0xff
 
 /*
+ * Custom t_stat
+ */
+
+#define SCPE_PEND     (SCPE_OK + 1)      /* CIO job already pending */
+#define SCPE_NOJOB    (SCPE_OK + 2)      /* No CIO job on the request queue */
+/*
  *
  * Physical memory in the 3B2 is arranged as follows:
  *
@@ -149,7 +155,9 @@ noret __libc_longjmp (jmp_buf buf, int val);
 #define IRQ_MSG      0x020
 #define IO_DBG       0x040
 #define TRACE_DBG    0x080
-#define ERR_MSG      0x100
+#define CALL_DBG     0x100
+#define PKT_DBG      0x200
+#define ERR_MSG      0x400
 
 /* Data types operated on by instructions. NB: These integer values
    have meaning when decoding instructions, so this is not just an
