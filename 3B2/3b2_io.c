@@ -217,7 +217,7 @@ void cio_cqueue(uint8 cid, uint8 cmd_stat, uint32 esize,
  */
 void cio_rexpress(uint8 cid, uint32 esize, cio_entry *rqe, uint8 *app_data)
 {
-    int i;
+    uint32 i;
     uint32 rqp;
 
     rqp = cio[cid].rqp;
