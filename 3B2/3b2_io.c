@@ -102,7 +102,7 @@ void cio_sysgen(uint8 cid)
 
     sysgen_p = pread_w(SYSGEN_PTR);
 
-    sim_debug(IO_DBG, &cpu_dev,
+    sim_debug(CIO_DBG, &cpu_dev,
               "[%08x] [SYSGEN] Starting sysgen for card %d. sysgen_p=%08x\n",
               R[NUM_PC], cid, sysgen_p);
 
@@ -116,22 +116,22 @@ void cio_sysgen(uint8 cid)
     cio[cid].ivec = pread_b(sysgen_p + 10);
     cio[cid].no_rque = pread_b(sysgen_p + 11);
 
-    sim_debug(IO_DBG, &cpu_dev,
+    sim_debug(CIO_DBG, &cpu_dev,
               "[SYSGEN]  sysgen rqp = %08x\n",
               cio[cid].rqp);
-    sim_debug(IO_DBG, &cpu_dev,
+    sim_debug(CIO_DBG, &cpu_dev,
               "[SYSGEN]  sysgen cqp = %08x\n",
               cio[cid].cqp);
-    sim_debug(IO_DBG, &cpu_dev,
+    sim_debug(CIO_DBG, &cpu_dev,
               "[SYSGEN]  sysgen rqs = %02x\n",
               cio[cid].rqs);
-    sim_debug(IO_DBG, &cpu_dev,
+    sim_debug(CIO_DBG, &cpu_dev,
               "[SYSGEN]  sysgen cqs = %02x\n",
               cio[cid].cqs);
-    sim_debug(IO_DBG, &cpu_dev,
+    sim_debug(CIO_DBG, &cpu_dev,
               "[SYSGEN]  sysgen ivec = %02x\n",
               cio[cid].ivec);
-    sim_debug(IO_DBG, &cpu_dev,
+    sim_debug(CIO_DBG, &cpu_dev,
               "[SYSGEN]  sysgen no_rque = %02x\n",
               cio[cid].no_rque);
 
@@ -139,7 +139,7 @@ void cio_sysgen(uint8 cid)
     if (cio[cid].sysgen != NULL) {
         cio[cid].sysgen(cid);
     } else {
-        sim_debug(IO_DBG, &cpu_dev,
+        sim_debug(CIO_DBG, &cpu_dev,
                   "[%08x] [cio_sysgen] Not running custom sysgen.\n",
                   R[NUM_PC]);
     }
@@ -151,7 +151,7 @@ void cio_cexpress(uint8 cid, uint32 esize, cio_entry *cqe, uint8 *app_data)
 
     cqp = cio[cid].cqp;
 
-    sim_debug(IO_DBG, &cpu_dev,
+    sim_debug(CIO_DBG, &cpu_dev,
               "[%08x] [cio_cexpress] cqp = %08x seqbit = %d\n",
               R[NUM_PC], cqp, cio[cid].seqbit);
 
@@ -408,7 +408,7 @@ uint32 io_read(uint32 pa, size_t size)
             case CIO_INT_NONE: /* We've never seen an INT0 or INT1 */
             case CIO_INT0: /* We've seen an INT0 but not an INT1. */
                 cio[cid].sysgen_s |= CIO_INT0;
-                sim_debug(IO_DBG, &cpu_dev,
+                sim_debug(CIO_DBG, &cpu_dev,
                           "[READ] [%08x] (%d INT0) ID\n",
                           R[NUM_PC], cid);
                 /* Return the correct byte of our board ID */
@@ -420,7 +420,7 @@ uint32 io_read(uint32 pa, size_t size)
                 break;
             case CIO_INT1: /* We've seen an INT1 but not an INT0. Time to sysgen */
                 cio[cid].sysgen_s |= CIO_INT0;
-                sim_debug(IO_DBG, &cpu_dev,
+                sim_debug(CIO_DBG, &cpu_dev,
                           "[READ] [%08x] (%d INT0) SYSGEN\n",
                           R[NUM_PC], cid);
                 cio_sysgen(cid);
@@ -428,7 +428,7 @@ uint32 io_read(uint32 pa, size_t size)
                 break;
             case CIO_SYSGEN: /* We've already sysgen'ed */
                 cio[cid].sysgen_s |= CIO_INT0; /* This must come BEFORE the exp_handler */
-                sim_debug(IO_DBG, &cpu_dev,
+                sim_debug(CIO_DBG, &cpu_dev,
                           "[READ] [%08x] (%d INT0) EXPRESS JOB\n",
                           R[NUM_PC], cid);
                 cio[cid].exp_handler(cid);
@@ -437,7 +437,7 @@ uint32 io_read(uint32 pa, size_t size)
             default:
                 /* This should never happen */
                 stop_reason = STOP_ERR;
-                sim_debug(IO_DBG, &cpu_dev,
+                sim_debug(CIO_DBG, &cpu_dev,
                           "[READ] [%08x] (%d INT0) ERROR IN STATE MACHINE sysgen_s=%02x\n",
                           R[NUM_PC], cid, cio[cid].sysgen_s);
                 data = 0;
@@ -450,20 +450,20 @@ uint32 io_read(uint32 pa, size_t size)
             case CIO_INT_NONE: /* We've never seen an INT0 or INT1 */
             case CIO_INT1:     /* We've seen an INT1 but not an INT0 */
                 /* There's nothing to do in this instance */
-                sim_debug(IO_DBG, &cpu_dev,
+                sim_debug(CIO_DBG, &cpu_dev,
                           "[READ] [%08x] (%d INT1) IGNORED\n",
                           R[NUM_PC], cid);
                 cio[cid].sysgen_s |= CIO_INT1;
                 break;
             case CIO_INT0: /* We've seen an INT0 but not an INT1. Time to sysgen */
-                sim_debug(IO_DBG, &cpu_dev,
+                sim_debug(CIO_DBG, &cpu_dev,
                           "[READ] [%08x] (%d INT1) SYSGEN\n",
                           R[NUM_PC], cid);
                 cio[cid].sysgen_s |= CIO_INT1;
                 cio_sysgen(cid);
                 break;
             case CIO_SYSGEN: /* We've already sysgen'ed */
-                sim_debug(IO_DBG, &cpu_dev,
+                sim_debug(CIO_DBG, &cpu_dev,
                           "[READ] [%08x] (%d INT1) FULL\n",
                           R[NUM_PC], cid);
                 cio[cid].sysgen_s |= CIO_INT1; /* This must come BEFORE the full handler */
@@ -472,7 +472,7 @@ uint32 io_read(uint32 pa, size_t size)
             default:
                 /* This should never happen */
                 stop_reason = STOP_ERR;
-                sim_debug(IO_DBG, &cpu_dev,
+                sim_debug(CIO_DBG, &cpu_dev,
                           "[READ] [%08x] (%d INT1) ERROR IN STATE MACHINE sysgen_s=%02x\n",
                           R[NUM_PC], cid, cio[cid].sysgen_s);
                 break;
@@ -480,7 +480,7 @@ uint32 io_read(uint32 pa, size_t size)
 
             return 0; /* Data returned is arbitrary */
         case IOF_STAT:
-            sim_debug(IO_DBG, &cpu_dev,
+            sim_debug(CIO_DBG, &cpu_dev,
                       "[READ] [%08x] (%d RESET)\n",
                       R[NUM_PC], cid);
             if (cio[cid].reset_handler) {
@@ -491,7 +491,7 @@ uint32 io_read(uint32 pa, size_t size)
         default:
             /* We should never reach here, but if we do, there's
              * nothing listening. */
-            sim_debug(IO_DBG, &cpu_dev,
+            sim_debug(CIO_DBG, &cpu_dev,
                       "[READ] [%08x] No card at cid=%d reg=%d\n",
                       R[NUM_PC], cid, reg);
             csr_data |= CSRTIMO;
@@ -528,7 +528,7 @@ void io_write(uint32 pa, uint32 val, size_t size)
 
         if (cio[cid].id == 0) {
             /* Nothing lives here */
-            sim_debug(IO_DBG, &cpu_dev,
+            sim_debug(CIO_DBG, &cpu_dev,
                       "[WRITE] [%08x] No card at cid=%d reg=%d\n",
                       R[NUM_PC], cid, reg);
             csr_data |= CSRTIMO;
@@ -548,20 +548,20 @@ void io_write(uint32 pa, uint32 val, size_t size)
             switch(cio[cid].sysgen_s) {
             case CIO_INT_NONE: /* We've never seen an INT0 or INT1 */
             case CIO_INT0:     /* We've seen an INT0 but not an INT1. */
-                sim_debug(IO_DBG, &cpu_dev,
+                sim_debug(CIO_DBG, &cpu_dev,
                           "[WRITE] [%08x] (%d INT0) ID\n",
                           R[NUM_PC], cid);
                 cio[cid].sysgen_s |= CIO_INT0;
                 break;
             case CIO_INT1: /* We've seen an INT1 but not an INT0. Time to sysgen */
-                sim_debug(IO_DBG, &cpu_dev,
+                sim_debug(CIO_DBG, &cpu_dev,
                           "[WRITE] [%08x] (%d INT0) SYSGEN\n",
                           R[NUM_PC], cid);
                 cio[cid].sysgen_s |= CIO_INT0;
                 cio_sysgen(cid);
                 break;
             case CIO_SYSGEN: /* We've already sysgen'ed */
-                sim_debug(IO_DBG, &cpu_dev,
+                sim_debug(CIO_DBG, &cpu_dev,
                           "[WRITE] [%08x] (%d INT0) EXPRESS JOB\n",
                           R[NUM_PC], cid);
                 cio[cid].sysgen_s |= CIO_INT0;
@@ -570,7 +570,7 @@ void io_write(uint32 pa, uint32 val, size_t size)
             default:
                 /* This should never happen */
                 stop_reason = STOP_ERR;
-                sim_debug(IO_DBG, &cpu_dev,
+                sim_debug(CIO_DBG, &cpu_dev,
                           "[WRITE] [%08x] (%d INT0) ERROR IN STATE MACHINE sysgen_s=%02x\n",
                           R[NUM_PC], cid, cio[cid].sysgen_s);
                 break;
@@ -582,20 +582,20 @@ void io_write(uint32 pa, uint32 val, size_t size)
             case CIO_INT_NONE: /* We've never seen an INT0 or INT1 */
             case CIO_INT1:     /* We've seen an INT1 but not an INT0 */
                 /* There's nothing to do in this instance */
-                sim_debug(IO_DBG, &cpu_dev,
+                sim_debug(CIO_DBG, &cpu_dev,
                           "[WRITE] [%08x] (%d INT1) IGNORED\n",
                           R[NUM_PC], cid);
                 cio[cid].sysgen_s |= CIO_INT1;
                 break;
             case CIO_INT0: /* We've seen an INT0 but not an INT1. Time to sysgen */
-                sim_debug(IO_DBG, &cpu_dev,
+                sim_debug(CIO_DBG, &cpu_dev,
                           "[WRITE] [%08x] (%d INT1) SYSGEN\n",
                           R[NUM_PC], cid);
                 cio[cid].sysgen_s |= CIO_INT1;
                 cio_sysgen(cid);
                 break;
             case CIO_SYSGEN: /* We've already sysgen'ed */
-                sim_debug(IO_DBG, &cpu_dev,
+                sim_debug(CIO_DBG, &cpu_dev,
                           "[WRITE] [%08x] (%d INT1) FULL\n",
                           R[NUM_PC], cid);
                 cio[cid].sysgen_s |= CIO_INT1;
@@ -604,7 +604,7 @@ void io_write(uint32 pa, uint32 val, size_t size)
             default:
                 /* This should never happen */
                 stop_reason = STOP_ERR;
-                sim_debug(IO_DBG, &cpu_dev,
+                sim_debug(CIO_DBG, &cpu_dev,
                           "[WRITE] [%08x] (%d INT1) ERROR IN STATE MACHINE sysgen_s=%02x\n",
                           R[NUM_PC], cid, cio[cid].sysgen_s);
                 break;
@@ -612,7 +612,7 @@ void io_write(uint32 pa, uint32 val, size_t size)
 
             return;
         case IOF_STAT:
-            sim_debug(IO_DBG, &cpu_dev,
+            sim_debug(CIO_DBG, &cpu_dev,
                       "[WRITE] [%08x] (%d RESET)\n",
                       R[NUM_PC], cid);
             if (cio[cid].reset_handler) {
@@ -623,7 +623,7 @@ void io_write(uint32 pa, uint32 val, size_t size)
         default:
             /* We should never reach here, but if we do, there's
              * nothing listening. */
-            sim_debug(IO_DBG, &cpu_dev,
+            sim_debug(CIO_DBG, &cpu_dev,
                       "[WRITE] [%08x] No card at cid=%d reg=%d\n",
                       R[NUM_PC], cid, reg);
             csr_data |= CSRTIMO;

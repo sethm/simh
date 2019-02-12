@@ -101,8 +101,6 @@ MTAB ni_mod[] = {
       NULL, &ni_show_rqueue, NULL, "Display Request Queue for card n" },
     { MTAB_XTD|MTAB_VDV|MTAB_VALR, 0, "CQUEUE=n", NULL,
       NULL, &ni_show_cqueue, NULL, "Display Completion Queue for card n" },
-    { MTAB_XTD|MTAB_VDV|MTAB_VALR, 0, "TMRWAIT", "TMRWAIT=n",
-      &ni_set_tmrwait, &ni_show_tmrwait, NULL, "Display or Change the card's timer wait delay (default 3000)" },
     { MTAB_XTD|MTAB_VDV|MTAB_VALR|MTAB_NC, 0, "MAC", "MAC=xx:xx:xx:xx:xx:xx",
       &ni_setmac, &ni_showmac, NULL, "MAC address" },
     { 0 }
@@ -371,7 +369,7 @@ static void ni_cmd(uint8 cid, cio_entry *rentry, uint8 *rapp_data, t_bool is_exp
                   "[ni_cmd] NI TURNON Operation\n");
 
         if (sim_idle_enab) {
-            sim_clock_coschedule(rcv_unit, ni.tmrwait);
+            sim_clock_coschedule(rcv_unit, tmxr_poll);
         } else {
             sim_activate_after(rcv_unit, NI_RCV_POLL_US);
         }
@@ -653,7 +651,6 @@ t_stat ni_reset(DEVICE *dptr)
     }
 
     ni.poll_rate = NI_QPOLL_FAST;
-    ni.tmrwait = NI_TMR_WAIT_DEFAULT;
 
     /* Make sure the transceiver is disabled and all
      * polling activity and interrupts are disabled. */
@@ -678,7 +675,7 @@ t_stat ni_rcv_svc(UNIT *uptr)
 
     /* Re-schedule the next poll */
     if (sim_idle_enab) {
-        sim_clock_coschedule(rcv_unit, ni.tmrwait);
+        sim_clock_coschedule(rcv_unit, tmxr_poll);
     } else {
         sim_activate_after(rcv_unit, NI_RCV_POLL_US);
     }
@@ -739,7 +736,7 @@ t_stat ni_rq_svc(UNIT *uptr)
         sim_activate_abs(rq_unit, NI_QPOLL_FAST);
     } else {
         if (sim_idle_enab) {
-            sim_clock_coschedule(rq_unit, NI_QPOLL_SLOW);
+            sim_clock_coschedule(rq_unit, tmxr_poll);
         } else {
             sim_activate_abs(rq_unit, NI_QPOLL_SLOW);
         }
@@ -811,26 +808,25 @@ void ni_process_packet()
 
     len = item->packet.len;
     rbuf = item->packet.msg;
-    que_num = len > SM_QUEUE_SIZE ? 1 : 0;
+    que_num = len > SM_PKT_MAX ? 1 : 0;
 
     sim_debug(IO_DBG, &ni_dev,
-              "[RCV] Receiving a packet of size %d (0x%x)\n",
+              "[ni_process_packet] Receiving a packet of size %d (0x%x)\n",
               len, len);
-
-    if (item->packet.oversize) {
-        sim_debug(IO_DBG, &ni_dev,
-                  "[RCV] Error: Oversized packet is being dropped.\n");
-        ni.stats.rx_dropped++;
-        return;
-    }
 
     /*
      * Consult the cache for a job.
      */
     if (ni.job_cache[que_num].rp == ni.job_cache[que_num].wp) {
         sim_debug(IO_DBG, &ni_dev,
-                  "[RCV] Error: No jobs available in receive queue cache.\n");
+                  "[ni_process_packet] Error: No jobs available in receive queue cache.\n");
         ni.stats.rx_dropped++;
+        ethq_remove(&ni.readq);
+        /* We should re-interrupt the host here, because there are
+         * apparently still jobs that need to be worked on. */
+        if (cio[ni.cid].ivec > 0) {
+            cio[ni.cid].intr = TRUE;
+        }
         return;
     }
 
@@ -878,7 +874,9 @@ void ni_process_packet()
  */
 void ni_recv_callback(int status) {
     if (ni.enabled) {
-        sim_debug(CALL_DBG, &ni_dev, "[ni_recv_callback] inserting ni_rd_buf into ni_readq\n");
+        sim_debug(CALL_DBG, &ni_dev,
+                  "[ni_recv_callback] inserting packet of len=%d (used=%d) into read queue.\n",
+                  ni.rd_buf.len, ni.rd_buf.used);
         ethq_insert(&ni.readq, ETH_ITM_NORMAL, &ni.rd_buf, SCPE_OK);
     } else {
         sim_debug(CALL_DBG, &ni_dev, "[ni_recv_callback] Disabled. Ignoring packet.\n");
@@ -1047,25 +1045,6 @@ t_stat ni_show_promisc(FILE *st, UNIT *uptr, int32 val, CONST void *desc)
     return SCPE_OK;
 }
 
-
-t_stat ni_set_tmrwait(UNIT *uptr, int32 val, CONST char *cptr, void *desc)
-{
-    if (!cptr) {
-        return SCPE_IERR;
-    }
-
-    ni.tmrwait = atoi(cptr);
-
-    return SCPE_OK;
-}
-
-t_stat ni_show_tmrwait(FILE *st, UNIT *uptr, int32 val, CONST void *desc)
-{
-    fprintf(st, "tmrwait=%d", ni.tmrwait);
-
-    return SCPE_OK;
-}
-
 t_stat ni_help(FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cptr)
 {
     const char help_string[] =
@@ -1164,6 +1143,17 @@ static t_stat ni_show_queue_common(FILE *st, UNIT *uptr, int32 val,
         fprintf(st, "No card in slot %d, or card has not completed sysgen\n", cid);
         return SCPE_ARG;
     }
+
+    fprintf(st, "---------------------------------------------------------\n");
+    fprintf(st, "Sysgen Block:\n");
+    fprintf(st, "---------------------------------------------------------\n");
+    fprintf(st, "    Request Queue Pointer: 0x%08x\n", cio[cid].rqp);
+    fprintf(st, " Completion Queue Pointer: 0x%08x\n", cio[cid].cqp);
+    fprintf(st, "       Request Queue Size: 0x%02x\n", cio[cid].rqs);
+    fprintf(st, "    Completion Queue Size: 0x%02x\n", cio[cid].cqs);
+    fprintf(st, "         Interrupt Vector: %d (0x%02x)\n", cio[cid].ivec, cio[cid].ivec);
+    fprintf(st, " Number of Request Queues: %d\n", cio[cid].no_rque);
+    fprintf(st, "---------------------------------------------------------\n");
 
     /* Get the top of the queue */
     if (rq) {

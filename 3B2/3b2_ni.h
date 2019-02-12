@@ -91,7 +91,8 @@
 #define GE_QUEUE       0         /* General request queue      */
 #define SM_QUEUE       1         /* Small packet receive queue */
 #define LG_QUEUE       2         /* Large packet receive queue */
-#define SM_QUEUE_SIZE  128       /* Max size of small packets  */
+#define SM_PKT_MAX     106       /* Max size of small packets (excluding CRC) */
+#define LG_PKT_MAX     1514      /* Max size of large packets (excluding CRC) */
 
 /*
  * The NI card caches up to three jobs taken from each of the two
@@ -146,7 +147,6 @@ typedef struct {
     t_bool          promisc;
     uint32          crc;
     uint32          poll_rate;
-    int32           tmrwait;
     char            mac_str[MAC_SIZE_CHARS];
     uint8           mac_bytes[MAC_SIZE_BYTES];
     ni_job_cache    job_cache[2];
@@ -180,8 +180,6 @@ t_stat ni_set_stats(UNIT *uptr, int32 val, CONST char *cptr, void *desc);
 t_stat ni_show_promisc(FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 t_stat ni_set_promisc(UNIT *uptr, int32 val, CONST char *cptr, void *desc);
 t_stat ni_show_poll(FILE *st, UNIT *uptr, int32 val, CONST void *desc);
-t_stat ni_set_tmrwait(UNIT *uptr, int32 val, CONST char *cptr, void *desc);
-t_stat ni_show_tmrwait(FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 const char *ni_description(DEVICE *dptr);
 t_stat ni_help(FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cptr);
 void ni_cio_reset(uint8 cid);

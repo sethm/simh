@@ -154,10 +154,11 @@ noret __libc_longjmp (jmp_buf buf, int val);
 #define INIT_MSG     0x010
 #define IRQ_MSG      0x020
 #define IO_DBG       0x040
-#define TRACE_DBG    0x080
-#define CALL_DBG     0x100
-#define PKT_DBG      0x200
-#define ERR_MSG      0x400
+#define CIO_DBG      0x080
+#define TRACE_DBG    0x100
+#define CALL_DBG     0x200
+#define PKT_DBG      0x400
+#define ERR_MSG      0x800
 
 /* Data types operated on by instructions. NB: These integer values
    have meaning when decoding instructions, so this is not just an
