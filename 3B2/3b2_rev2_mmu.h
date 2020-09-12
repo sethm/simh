@@ -1,4 +1,4 @@
-/* 3b2_400_mmu.c: AT&T 3B2 Model 400 MMU (WE32101) Header
+/* 3b2_rev2_mmu.h: AT&T 3B2 Model 400 MMU (WE32101) Header
 
    Copyright (c) 2017, Seth J. Morabito
 
@@ -32,7 +32,6 @@
 #define _3B2_400_MMU_H_
 
 #include "sim_defs.h"
-#include "3b2_400_defs.h"
 
 /************************************************************************
  *
@@ -141,13 +140,10 @@
  *
  ***********************************************************************/
 
-#define MMUBASE 0x40000
-#define MMUSIZE 0x1000
-
-#define MMU_SRS  0x04       /* Section RAM array size (words) */
-#define MMU_SDCS 0x20       /* Segment Descriptor Cache H/L array size
+#define MMU_SRS     4       /* Section RAM array size (words) */
+#define MMU_SDCS   32       /* Segment Descriptor Cache H/L array size
                                (words) */
-#define MMU_PDCS 0x20       /* Page Descriptor Cache H/L array size
+#define MMU_PDCS   32       /* Page Descriptor Cache H/L array size
                                (words) */
 
 /* Register address offsets */
@@ -188,9 +184,6 @@
 /* Shift and mask the flag bits for the current CPU mode */
 #define MMU_PERM(f)  ((f >> ((3 - CPU_CM) * 2)) & 3)
 
-#define ROM_SIZE       0x10000
-#define BOOT_CODE_SIZE 0x8000
-
 /* Codes set in the MMU Fault register */
 #define MMU_F_SDTLEN             0x03
 #define MMU_F_PW                 0x04
@@ -213,12 +206,6 @@
 #define ACC_W    10 /* Write */
 #define ACC_IFAD 12 /* Instruction fetch after discontinuity */
 #define ACC_IF   13 /* Instruction fetch */
-
-/* Memory access levels */
-#define L_KERNEL 0
-#define L_EXEC   1
-#define L_SUPER  2
-#define L_USER   3
 
 /* Pluck out Virtual Address fields */
 #define SID(va)           (((va) >> 30) & 3)
@@ -280,9 +267,23 @@
 
 #define PD_LOC(sd1,va)    SD_SEG_ADDR(sd1) + (PSL(va) * 4)
 
-/* Page Descriptor Cache Entry
- *
- */
+#define SHOULD_CACHE_PD(pd)                     \
+    (fc && PD_PRESENT(pd))
+
+#define SHOULD_CACHE_SD(sd)                     \
+    (fc && SD_VALID(sd) && SD_PRESENT(sd))
+
+#define SHOULD_UPDATE_SD_R_BIT(sd)              \
+    (MMU_CONF_R && !((sd) & SD_R_MASK))
+
+#define SHOULD_UPDATE_SD_M_BIT(sd)                          \
+    (MMU_CONF_M && r_acc == ACC_W && !((sd) & SD_M_MASK))
+
+#define SHOULD_UPDATE_PD_R_BIT(pd)              \
+    (!((pd) & PD_R_MASK))
+
+#define SHOULD_UPDATE_PD_M_BIT(pd)              \
+    (r_acc == ACC_W && !((pd) & PD_M_MASK))
 
 /* Convert from pd to pd cache entry. Alwasy sets "Good" bit. */
 #define SD_TO_PDCXL(va,sd0)   ((sd0 & 0xff000000)|PD_TAG(va))
@@ -333,62 +334,13 @@ typedef struct _mmu_state {
 
 t_stat mmu_init(DEVICE *dptr);
 uint32 mmu_read(uint32 pa, size_t size);
-void mmu_write(uint32 pa, uint32 val, size_t size);
+void   mmu_write(uint32 pa, uint32 val, size_t size);
 CONST char *mmu_description(DEVICE *dptr);
-
-/* Physical memory read/write */
-uint8  pread_b(uint32 pa);
-uint16 pread_h(uint32 pa);
-uint32 pread_w(uint32 pa);
-uint32 pread_w_u(uint32 pa);
-void   pwrite_b(uint32 pa, uint8 val);
-void   pwrite_h(uint32 pa, uint16 val);
-void   pwrite_w(uint32 pa, uint32 val);
-
-/* TODO: REMOVE AFTER DEBUGGING */
-uint32 safe_read_w(uint32 va);
 
 /* Virtual memory translation */
 uint32 mmu_xlate_addr(uint32 va, uint8 r_acc);
 t_stat mmu_decode_vaddr(uint32 vaddr, uint8 r_acc,
                         t_bool fc, uint32 *pa);
-
-#define SHOULD_CACHE_PD(pd)                     \
-    (fc && PD_PRESENT(pd))
-
-#define SHOULD_CACHE_SD(sd)                     \
-    (fc && SD_VALID(sd) && SD_PRESENT(sd))
-
-#define SHOULD_UPDATE_SD_R_BIT(sd)              \
-    (MMU_CONF_R && !((sd) & SD_R_MASK))
-
-#define SHOULD_UPDATE_SD_M_BIT(sd)                          \
-    (MMU_CONF_M && r_acc == ACC_W && !((sd) & SD_M_MASK))
-
-#define SHOULD_UPDATE_PD_R_BIT(pd)              \
-    (!((pd) & PD_R_MASK))
-
-#define SHOULD_UPDATE_PD_M_BIT(pd)              \
-    (r_acc == ACC_W && !((pd) & PD_M_MASK))
-
-/* Special functions for reading operands and examining memory
-   safely */
-t_stat read_operand(uint32 va, uint8 *val);
-t_stat examine(uint32 va, uint8 *val);
-t_stat deposit(uint32 va, uint8 val);
-
-/* Dispatch to the MMU when enabled, or to physical RW when
-   disabled */
-uint8  read_b(uint32 va, uint8 r_acc);
-uint16 read_h(uint32 va, uint8 r_acc);
-uint32 read_w(uint32 va, uint8 r_acc);
-void   write_b(uint32 va, uint8 val);
-void   write_h(uint32 va, uint16 val);
-void   write_w(uint32 va, uint32 val);
-
-t_bool addr_is_rom(uint32 pa);
-t_bool addr_is_mem(uint32 pa);
-t_bool addr_is_io(uint32 pa);
 
 t_stat mmu_decode_va(uint32 va, uint8 r_acc, t_bool fc, uint32 *pa);
 void   mmu_enable();

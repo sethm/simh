@@ -56,9 +56,6 @@
 
 #define VTOC_BLOCK    0
 
-#define ATOW(arr,i)  ((uint32)arr[i+3] + ((uint32)arr[i+2] << 8) +      \
-                      ((uint32)arr[i+1] << 16) + ((uint32)arr[i] << 24))
-
 /* Static function declarations */
 static t_stat ctc_show_cqueue(FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 static t_stat ctc_show_rqueue(FILE *st, UNIT *uptr, int32 val, CONST void *desc);
@@ -67,7 +64,7 @@ static t_stat ctc_show_queue_common(FILE *st, UNIT *uptr, int32 val, CONST void 
 static uint8   int_cid;             /* Interrupting card ID   */
 static uint8   int_subdev;          /* Interrupting subdevice */
 static t_bool  ctc_conf = FALSE;    /* Has a CTC card been configured? */
-static uint32  ctc_crc;             /* CRC32 of downloaded memory */
+static uint32  ctc_crc = 0;         /* CRC32 of downloaded memory */
 
 struct partition vtoc_table[VTOC_PART] = {
     { 2, 0, 5272,  8928  },   /* 00 */
@@ -268,7 +265,7 @@ static void ctc_cmd(uint8 cid,
     t_seccnt secrw = 0;
     struct vtoc vtoc = {{0}};
     struct pdinfo pdinfo = {0};
-    t_stat result;
+    t_stat result = SCPE_OK;
 
     uint32 lba;   /* Logical Block Address */
 
@@ -801,7 +798,7 @@ t_stat ctc_show_cqueue(FILE *st, UNIT *uptr, int32 val, CONST void *desc)
 
 
 static t_stat ctc_show_queue_common(FILE *st, UNIT *uptr, int32 val,
-                                      CONST void *desc, t_bool rq)
+                                    CONST void *desc, t_bool rq)
 {
     uint8 cid;
     char *cptr = (char *) desc;

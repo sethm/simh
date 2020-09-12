@@ -1,4 +1,4 @@
-/* 3b2_400_cpu.c: AT&T 3B2 Model 400 CPU (WE32100) Implementation
+/* 3b2_cpu.c: AT&T 3B2 CPU
 
    Copyright (c) 2017, Seth J. Morabito
 
@@ -28,10 +28,31 @@
    from the author.
 */
 
+/*
+ * This is an implementation of the WE32100 and WE32200 CPUs, used in
+ * the 3B2/400 and 3B2/600G, respectively.
+ *
+ * The WE32000 series of microprocessors were a fully 32-bit general
+ * purpose CISC architecture purposely designed to run UNIX.
+ *
+ * The architecture is fully described in the following books:
+ *
+ * - "WE 32100 Microprocessor Information Manual" (AT&T, 1985)
+ * - "WE 32200 Microprocessor Information Manual" (AT&T, 1988)
+ *
+ */
 #include "3b2_defs.h"
-#include "3b2_400_cpu.h"
-#include "rom_400_bin.h"
+#include "3b2_cpu.h"
+
 #include <sim_defs.h>
+
+#if defined(REV3)
+#include "rom_1000_bin.h"
+#else
+#include "rom_400_bin.h"
+#endif
+
+uint32 rom_size = BOOT_CODE_SIZE;
 
 #define MAX_SUB_RETURN_SKIP 9
 
@@ -100,7 +121,11 @@ volatile int32 stop_reason;
 volatile uint32 abort_reason;
 
 /* Register data */
+#if defined (REV3)
+uint32 R[32];
+#else
 uint32 R[16];
+#endif
 
 /* Other global CPU state */
 uint8  cpu_int_ipl    = 0;         /* Interrupt IPL level */
@@ -108,7 +133,7 @@ uint8  cpu_int_vec    = 0;         /* Interrupt vector */
 t_bool cpu_nmi        = FALSE;     /* If set, there has been an NMI */
 
 int32  pc_incr        = 0;         /* Length (in bytes) of instruction
-                                     currently being executed */
+                                      currently being executed */
 t_bool cpu_ex_halt    = FALSE;     /* Flag to halt on exceptions /
                                       traps */
 t_bool cpu_km         = FALSE;     /* If true, kernel mode has been forced
@@ -137,13 +162,20 @@ BITFIELD psw_bits[] = {
     BIT(CD),             /* Cache Disable */
     BIT(QIE),            /* Quick-Interrupt Enable */
     BIT(CFD),            /* Cache Flush Disable */
+#if defined (REV3)
+    BIT(X),              /* Extend Carry / Borrow */
+    BIT(AR),             /* Additional Register Save */
+    BIT(EXUC),           /* Exception/User Call Option */
+    BIT(EA),             /* Enable Arbitrary Alignment */
+    BITNCF(2),           /* Unused */
+#else
     BITNCF(6),           /* Unused */
+#endif
     ENDBITS
 };
 
 /* Registers. */
 REG cpu_reg[] = {
-    { HRDATAD  (PC,   R[NUM_PC],   32, "Program Counter") },
     { HRDATAD  (R0,   R[0],        32, "General purpose register 0") },
     { HRDATAD  (R1,   R[1],        32, "General purpose register 1") },
     { HRDATAD  (R2,   R[2],        32, "General purpose register 2") },
@@ -159,6 +191,27 @@ REG cpu_reg[] = {
     { HRDATAD  (SP,   R[NUM_SP],   32, "Stack Pointer") },
     { HRDATAD  (PCBP, R[NUM_PCBP], 32, "Process Control Block Pointer") },
     { HRDATAD  (ISP,  R[NUM_ISP],  32, "Interrupt Stack Pointer") },
+    { HRDATAD  (PC,   R[NUM_PC],   32, "Program Counter") },
+#if defined (REV3)
+    { HRDATAD  (R16,  R[16],       32, "General purpose register 16")},
+    { HRDATAD  (R17,  R[17],       32, "General purpose register 17")},
+    { HRDATAD  (R18,  R[18],       32, "General purpose register 18")},
+    { HRDATAD  (R19,  R[19],       32, "General purpose register 19")},
+    { HRDATAD  (R20,  R[20],       32, "General purpose register 20")},
+    { HRDATAD  (R21,  R[21],       32, "General purpose register 21")},
+    { HRDATAD  (R22,  R[22],       32, "General purpose register 22")},
+    { HRDATAD  (R23,  R[23],       32, "General purpose register 23")},
+    { HRDATAD  (R24,  R[24],       32, "Privileged register 24")},
+    { HRDATAD  (R25,  R[25],       32, "Privileged register 25")},
+    { HRDATAD  (R26,  R[26],       32, "Privileged register 26")},
+    { HRDATAD  (R27,  R[27],       32, "Privileged register 27")},
+    { HRDATAD  (R28,  R[28],       32, "Privileged register 28")},
+    { HRDATAD  (R29,  R[29],       32, "Privileged register 29")},
+    { HRDATAD  (R30,  R[30],       32, "Privileged register 30")},
+    { HRDATAD  (R31,  R[31],       32, "Privileged register 31")},
+#endif
+    { HRDATAD  (IPL,  cpu_int_ipl, 8, "Current cpu IPL bits")},
+    { HRDATAD  (VEC,  cpu_int_vec, 8, "Current CPU vector")},
     { NULL }
 };
 
@@ -176,7 +229,9 @@ static DEBTAB cpu_deb_tab[] = {
     { NULL,         0,              NULL                    }
 };
 
-UNIT cpu_unit = { UDATA (NULL, UNIT_FIX|UNIT_BINK|UNIT_IDLE, MAXMEMSIZE) };
+UNIT cpu_unit = {
+    UDATA (NULL, UNIT_FIX|UNIT_BINK|UNIT_IDLE, DEFMEMSIZE)
+};
 
 /*
  * The following commands deposit a small calibration program into
@@ -239,22 +294,35 @@ static const char *att3b2_clock_precalibrate_commands[] = {
     NULL
 };
 
-/*
- * TODO: This works fine for now, but the moment we want to emulate
- * SCSI (0x0100) or EPORTS (0x0102) we're in trouble!
- */
-const char *cio_names[8] = {
-    "", "SBD", "NI", "PORTS",
-    "*VOID*", "CTC", "NAU", "*VOID*"
+CONST cio_device cio_entries[] = {
+    { 0x0001, "SBD"   },
+    { 0x0002, "NI"    },
+    { 0x0003, "PORTS" },
+    { 0x0005, "CTC"   },
+    { 0x0006, "NAU"   },
+    { 0x0100, "SCSI"  },
+    { 0 }
 };
 
 MTAB cpu_mod[] = {
+#if defined (REV2)
     { UNIT_MSIZE, (1u << 20), NULL, "1M",
       &cpu_set_size, NULL, NULL, "Set Memory to 1M bytes" },
     { UNIT_MSIZE, (1u << 21), NULL, "2M",
       &cpu_set_size, NULL, NULL, "Set Memory to 2M bytes" },
+#endif
     { UNIT_MSIZE, (1u << 22), NULL, "4M",
       &cpu_set_size, NULL, NULL, "Set Memory to 4M bytes" },
+#if defined (REV3)
+    { UNIT_MSIZE, (1u << 23), NULL, "8M",
+      &cpu_set_size, NULL, NULL, "Set Memory to 8M bytes" },
+    { UNIT_MSIZE, (1u << 24), NULL, "16M",
+      &cpu_set_size, NULL, NULL, "Set Memory to 16M bytes" },
+    { UNIT_MSIZE, (1u << 25), NULL, "32M",
+      &cpu_set_size, NULL, NULL, "Set Memory to 32M bytes" },
+    { UNIT_MSIZE, (1u << 26), NULL, "64M",
+      &cpu_set_size, NULL, NULL, "Set Memory to 64M bytes" },
+#endif
     { MTAB_XTD|MTAB_VDV|MTAB_NMO|MTAB_SHP, 0, "HISTORY", "HISTORY",
       &cpu_set_hist, &cpu_show_hist, NULL, "Displays instruction history" },
     { MTAB_XTD|MTAB_VDV|MTAB_NMO|MTAB_SHP, 0, "VIRTUAL", NULL,
@@ -265,10 +333,14 @@ MTAB cpu_mod[] = {
       NULL, &cpu_show_cio, NULL, "Display CIO configuration" },
     { MTAB_XTD|MTAB_VDV, 0, "IDLE", "IDLE", &sim_set_idle, &sim_show_idle },
     { MTAB_XTD|MTAB_VDV, 0, NULL, "NOIDLE", &sim_clr_idle, NULL },
-    { UNIT_EXHALT, UNIT_EXHALT, "Halt on Exception", "EXHALT",
-      NULL, NULL, NULL, "Enables Halt on exceptions and traps" },
-    { UNIT_EXHALT, 0, "No halt on exception", "NOEXHALT",
+    { UNIT_EXBRK, UNIT_EXBRK, "Break on exception", "EXBRK",
+      NULL, NULL, NULL, "Enable break on exceptions and traps" },
+    { UNIT_EXBRK, 0, "No break on exceptions", "NOEXBRK",
       NULL, NULL, NULL, "Disables Halt on exceptions and traps" },
+    { UNIT_OPBRK, UNIT_OPBRK, "Break on invalid opcodes", "OPBRK",
+      NULL, NULL, NULL, "Enable break on invalid opcodes" },
+    { UNIT_OPBRK, 0, "No break on invalid opcodes", "NOOPBRK",
+      NULL, NULL, NULL, "Disable break on invalid opcodes" },
     { 0 }
 };
 
@@ -301,8 +373,6 @@ DEVICE cpu_dev = {
     &cpu_description     /* Device Description */
 };
 
-#define HWORD_OP_COUNT 11
-
 mnemonic hword_ops[HWORD_OP_COUNT] = {
     {0x3009, 0, OP_NONE, NA, "MVERNO",  -1, -1, -1, -1},
     {0x300d, 0, OP_NONE, NA, "ENBVJMP", -1, -1, -1, -1},
@@ -314,6 +384,9 @@ mnemonic hword_ops[HWORD_OP_COUNT] = {
     {0x3045, 0, OP_NONE, NA, "RETG",    -1, -1, -1, -1},
     {0x3061, 0, OP_NONE, NA, "GATE",    -1, -1, -1, -1},
     {0x30ac, 0, OP_NONE, NA, "CALLPS",  -1, -1, -1, -1},
+#if defined(REV3)
+    {0x30c0, 0, OP_NONE, NA, "UCALLPS", -1, -1, -1, -1},
+#endif
     {0x30c8, 0, OP_NONE, NA, "RETPS",   -1, -1, -1, -1}
 };
 
@@ -328,7 +401,11 @@ mnemonic ops[256] = {
     {0x06,  2, OP_COPR, WD, "SPOPRT",  1, -1, -1, -1},
     {0x07,  3, OP_COPR, WD, "SPOPT2",  1, -1, -1,  2},
     {0x08,  0, OP_NONE, NA, "RET",    -1, -1, -1, -1},
+#if defined(REV3)
+    {0x09,  3, OP_DESC, WD, "CASWI",   0,  1, -1,  2},
+#else
     {0x09, -1, OP_NONE, NA, "???",    -1, -1, -1, -1},
+#endif
     {0x0a, -1, OP_NONE, NA, "???",    -1, -1, -1, -1},
     {0x0b, -1, OP_NONE, NA, "???",    -1, -1, -1, -1},
     {0x0c,  2, OP_DESC, WD, "MOVTRW",  0, -1, -1,  1},
@@ -579,39 +656,39 @@ mnemonic ops[256] = {
 
 /* from MAME (src/devices/cpu/m68000/m68kcpu.c) */
 const uint8 shift_8_table[65] =
-{
-    0x00, 0x80, 0xc0, 0xe0, 0xf0, 0xf8, 0xfc, 0xfe, 0xff, 0xff, 0xff, 0xff,
-    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-    0xff, 0xff, 0xff, 0xff, 0xff
-};
+    {
+        0x00, 0x80, 0xc0, 0xe0, 0xf0, 0xf8, 0xfc, 0xfe, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff
+    };
 const uint16 shift_16_table[65] =
-{
-    0x0000, 0x8000, 0xc000, 0xe000, 0xf000, 0xf800, 0xfc00, 0xfe00, 0xff00,
-    0xff80, 0xffc0, 0xffe0, 0xfff0, 0xfff8, 0xfffc, 0xfffe, 0xffff, 0xffff,
-    0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff,
-    0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff,
-    0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff,
-    0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff,
-    0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff,
-    0xffff, 0xffff
-};
+    {
+        0x0000, 0x8000, 0xc000, 0xe000, 0xf000, 0xf800, 0xfc00, 0xfe00, 0xff00,
+        0xff80, 0xffc0, 0xffe0, 0xfff0, 0xfff8, 0xfffc, 0xfffe, 0xffff, 0xffff,
+        0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff,
+        0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff,
+        0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff,
+        0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff,
+        0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff,
+        0xffff, 0xffff
+    };
 const uint32 shift_32_table[65] =
-{
-    0x00000000, 0x80000000, 0xc0000000, 0xe0000000, 0xf0000000, 0xf8000000,
-    0xfc000000, 0xfe000000, 0xff000000, 0xff800000, 0xffc00000, 0xffe00000,
-    0xfff00000, 0xfff80000, 0xfffc0000, 0xfffe0000, 0xffff0000, 0xffff8000,
-    0xffffc000, 0xffffe000, 0xfffff000, 0xfffff800, 0xfffffc00, 0xfffffe00,
-    0xffffff00, 0xffffff80, 0xffffffc0, 0xffffffe0, 0xfffffff0, 0xfffffff8,
-    0xfffffffc, 0xfffffffe, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff,
-    0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff,
-    0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff,
-    0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff,
-    0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff,
-    0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff
-};
+    {
+        0x00000000, 0x80000000, 0xc0000000, 0xe0000000, 0xf0000000, 0xf8000000,
+        0xfc000000, 0xfe000000, 0xff000000, 0xff800000, 0xffc00000, 0xffe00000,
+        0xfff00000, 0xfff80000, 0xfffc0000, 0xfffe0000, 0xffff0000, 0xffff8000,
+        0xffffc000, 0xffffe000, 0xfffff000, 0xfffff800, 0xfffffc00, 0xfffffe00,
+        0xffffff00, 0xffffff80, 0xffffffc0, 0xffffffe0, 0xfffffff0, 0xfffffff8,
+        0xfffffffc, 0xfffffffe, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff,
+        0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff,
+        0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff,
+        0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff,
+        0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff,
+        0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff
+    };
 
 t_stat cpu_show_stack(FILE *st, UNIT *uptr, int32 val, CONST void *desc)
 {
@@ -650,12 +727,25 @@ t_stat cpu_show_stack(FILE *st, UNIT *uptr, int32 val, CONST void *desc)
 
 t_stat cpu_show_cio(FILE *st, UNIT *uptr, int32 val, CONST void *desc)
 {
-    uint32 i;
+    uint32 i, j;
+    const cio_entry *e;
 
     fprintf(st, "  SLOT     DEVICE\n");
     fprintf(st, "---------------------\n");
     for (i = 0; i < CIO_SLOTS; i++) {
-        fprintf(st, "   %d        %s\n", i, cio_names[cio[i].id & 0x7]);
+
+        /* Find the matching entry for this slot */
+        for (j = 0; cio_entries[j].id != 0; j++) {
+            if (cio_entries[j].id == cio[i].id) {
+                break;
+            }
+        }
+
+        if (cio_entries[j].id == 0) {
+            fprintf(st, "   %d\n", i);
+        } else {
+            fprintf(st, "   %d        %s\n", i, cio_entries[j].name);
+        }
     }
 
     return SCPE_OK;
@@ -669,7 +759,7 @@ void cpu_load_rom()
         return;
     }
 
-    for (i = 0; i < BOOT_CODE_SIZE; i++) {
+    for (i = 0; i < rom_size; i++) {
         val = BOOT_CODE_ARRAY[i];
         sc = (~(i & 3) << 3) & 0x1f;
         mask = 0xffu << sc;
@@ -787,29 +877,33 @@ t_stat cpu_reset(DEVICE *dptr)
 
     if (!sim_is_running) {
         /* Clear registers */
-        for (i = 0; i < 16; i++) {
+        for (i = 0; i < NUM_REG; i++) {
             R[i] = 0;
         }
 
-        /* Allocate memory */
+        if (RAM != NULL) {
+            free(RAM);
+        }
+
+        RAM = (uint32 *) calloc((size_t)(MEM_SIZE >> 2), sizeof(uint32));
+
+        if (RAM == NULL) {
+            return SCPE_MEM;
+        }
+
+        sim_vm_is_subroutine_call = cpu_is_pc_a_subroutine_call;
+
         if (ROM == NULL) {
-            ROM = (uint32 *) calloc(BOOT_CODE_SIZE >> 2, sizeof(uint32));
+            ROM = (uint32 *) calloc(rom_size >> 2, sizeof(uint32));
             if (ROM == NULL) {
                 return SCPE_MEM;
             }
 
-            memset(ROM, 0, BOOT_CODE_SIZE >> 2);
+            memset(ROM, 0, rom_size >> 2);
         }
 
         if (RAM == NULL) {
-            RAM = (uint32 *) calloc((size_t)(MEM_SIZE >> 2), sizeof(uint32));
-            if (RAM == NULL) {
-                return SCPE_MEM;
-            }
-
             memset(RAM, 0, (size_t)(MEM_SIZE >> 2));
-
-            sim_vm_is_subroutine_call = cpu_is_pc_a_subroutine_call;
         }
 
         cpu_load_rom();
@@ -828,16 +922,16 @@ t_stat cpu_reset(DEVICE *dptr)
 }
 
 static const char *cpu_next_caveats =
-"The NEXT command in this 3B2 architecture simulator currently will\n"
-"enable stepping across subroutine calls which are initiated by the\n"
-"JSB, CALL and CALLPS instructions.\n"
-"This stepping works by dynamically establishing breakpoints at the\n"
-"memory address immediately following the instruction which initiated\n"
-"the subroutine call.  These dynamic breakpoints are automatically\n"
-"removed once the simulator returns to the sim> prompt for any reason.\n"
-"If the called routine returns somewhere other than one of these\n"
-"locations due to a trap, stack unwind or any other reason, instruction\n"
-"execution will continue until some other reason causes execution to stop.\n";
+    "The NEXT command in this 3B2 architecture simulator currently will\n"
+    "enable stepping across subroutine calls which are initiated by the\n"
+    "JSB, CALL and CALLPS instructions.\n"
+    "This stepping works by dynamically establishing breakpoints at the\n"
+    "memory address immediately following the instruction which initiated\n"
+    "the subroutine call.  These dynamic breakpoints are automatically\n"
+    "removed once the simulator returns to the sim> prompt for any reason.\n"
+    "If the called routine returns somewhere other than one of these\n"
+    "locations due to a trap, stack unwind or any other reason, instruction\n"
+    "execution will continue until some other reason causes execution to stop.\n";
 
 t_bool cpu_is_pc_a_subroutine_call (t_addr **ret_addrs)
 {
@@ -882,6 +976,7 @@ t_stat fprint_sym_m(FILE *of, t_addr addr, t_value *val)
     mnemonic *mn;
     char reg_name[8];
 
+    desc = 0;
     mn = NULL;
     vp = 0;
     etype = -1;
@@ -890,7 +985,7 @@ t_stat fprint_sym_m(FILE *of, t_addr addr, t_value *val)
 
     if (inst == 0x30) {
         /* Scan to find opcode */
-        inst = 0x3000 | (int8) val[vp++];
+        inst = 0x3000 | (uint8) val[vp++];
         for (i = 0; i < HWORD_OP_COUNT; i++) {
             if (hword_ops[i].opcode == inst) {
                 mn = &hword_ops[i];
@@ -1411,7 +1506,7 @@ static uint8 decode_operand(uint32 pa, instr *instr, uint8 op_number, int8 *etyp
     operand *oper = &instr->operands[op_number];
 
     /* Read in the descriptor byte */
-    desc = read_b(pa + offset++, ACC_OF);
+    desc = read_b(pa + offset++, ACC_IF);
 
     oper->mode = (desc >> 4) & 0xf;
     oper->reg = desc & 0xf;
@@ -1430,10 +1525,10 @@ static uint8 decode_operand(uint32 pa, instr *instr, uint8 op_number, int8 *etyp
     case 4:  /* Word Immediate, Register Mode */
         switch (oper->reg) {
         case 15: /* Word Immediate */
-            oper->embedded.w = (uint32) read_b(pa + offset++, ACC_OF);
-            oper->embedded.w |= ((uint32) read_b(pa + offset++, ACC_OF)) << 8u;
-            oper->embedded.w |= ((uint32) read_b(pa + offset++, ACC_OF)) << 16u;
-            oper->embedded.w |= ((uint32) read_b(pa + offset++, ACC_OF)) << 24u;
+            oper->embedded.w = (uint32) read_b(pa + offset++, ACC_IF);
+            oper->embedded.w |= ((uint32) read_b(pa + offset++, ACC_IF)) << 8u;
+            oper->embedded.w |= ((uint32) read_b(pa + offset++, ACC_IF)) << 16u;
+            oper->embedded.w |= ((uint32) read_b(pa + offset++, ACC_IF)) << 24u;
             oper->data = oper->embedded.w;
             break;
         default: /* Register mode */
@@ -1444,8 +1539,8 @@ static uint8 decode_operand(uint32 pa, instr *instr, uint8 op_number, int8 *etyp
     case 5: /* Halfword Immediate, Register Deferred Mode */
         switch (oper->reg) {
         case 15: /* Halfword Immediate */
-            oper->embedded.h = (uint16) read_b(pa + offset++, ACC_OF);
-            oper->embedded.h |= ((uint16) read_b(pa + offset++, ACC_OF)) << 8u;
+            oper->embedded.h = (uint16) read_b(pa + offset++, ACC_IF);
+            oper->embedded.h |= ((uint16) read_b(pa + offset++, ACC_IF)) << 8u;
             oper->data = oper->embedded.h;
             break;
         case 11: /* INVALID */
@@ -1459,7 +1554,7 @@ static uint8 decode_operand(uint32 pa, instr *instr, uint8 op_number, int8 *etyp
     case 6: /* Byte Immediate, FP Short Offset */
         switch (oper->reg) {
         case 15: /* Byte Immediate */
-            oper->embedded.b = read_b(pa + offset++, ACC_OF);
+            oper->embedded.b = read_b(pa + offset++, ACC_IF);
             oper->data = oper->embedded.b;
             break;
         default: /* FP Short Offset */
@@ -1471,10 +1566,10 @@ static uint8 decode_operand(uint32 pa, instr *instr, uint8 op_number, int8 *etyp
     case 7: /* Absolute, AP Short Offset */
         switch (oper->reg) {
         case 15: /* Absolute */
-            oper->embedded.w = (uint32) read_b(pa + offset++, ACC_OF);
-            oper->embedded.w |= ((uint32) read_b(pa + offset++, ACC_OF)) << 8u;
-            oper->embedded.w |= ((uint32) read_b(pa + offset++, ACC_OF)) << 16u;
-            oper->embedded.w |= ((uint32) read_b(pa + offset++, ACC_OF)) << 24u;
+            oper->embedded.w = (uint32) read_b(pa + offset++, ACC_IF);
+            oper->embedded.w |= ((uint32) read_b(pa + offset++, ACC_IF)) << 8u;
+            oper->embedded.w |= ((uint32) read_b(pa + offset++, ACC_IF)) << 16u;
+            oper->embedded.w |= ((uint32) read_b(pa + offset++, ACC_IF)) << 24u;
             oper->data = oper->embedded.w;
             break;
         default: /* AP Short Offset */
@@ -1485,30 +1580,30 @@ static uint8 decode_operand(uint32 pa, instr *instr, uint8 op_number, int8 *etyp
         break;
     case 8: /* Word Displacement */
     case 9: /* Word Displacement Deferred */
-        oper->embedded.w = (uint32) read_b(pa + offset++, ACC_OF);
-        oper->embedded.w |= ((uint32) read_b(pa + offset++, ACC_OF)) << 8u;
-        oper->embedded.w |= ((uint32) read_b(pa + offset++, ACC_OF)) << 16u;
-        oper->embedded.w |= ((uint32) read_b(pa + offset++, ACC_OF)) << 24u;
+        oper->embedded.w = (uint32) read_b(pa + offset++, ACC_IF);
+        oper->embedded.w |= ((uint32) read_b(pa + offset++, ACC_IF)) << 8u;
+        oper->embedded.w |= ((uint32) read_b(pa + offset++, ACC_IF)) << 16u;
+        oper->embedded.w |= ((uint32) read_b(pa + offset++, ACC_IF)) << 24u;
         oper->data = oper->embedded.w;
         break;
     case 10: /* Halfword Displacement */
     case 11: /* Halfword Displacement Deferred */
-        oper->embedded.h = read_b(pa + offset++, ACC_OF);
-        oper->embedded.h |= ((uint16) read_b(pa + offset++, ACC_OF)) << 8u;
+        oper->embedded.h = read_b(pa + offset++, ACC_IF);
+        oper->embedded.h |= ((uint16) read_b(pa + offset++, ACC_IF)) << 8u;
         oper->data = oper->embedded.h;
         break;
     case 12: /* Byte Displacement */
     case 13: /* Byte Displacement Deferred */
-        oper->embedded.b = read_b(pa + offset++, ACC_OF);
+        oper->embedded.b = read_b(pa + offset++, ACC_IF);
         oper->data = oper->embedded.b;
         break;
     case 14: /* Absolute Deferred, Extended-Operand */
         switch (oper->reg) {
         case 15: /* Absolute Deferred */
-            oper->embedded.w = (uint32) read_b(pa + offset++, ACC_OF);
-            oper->embedded.w |= ((uint32) read_b(pa + offset++, ACC_OF)) << 8u;
-            oper->embedded.w |= ((uint32) read_b(pa + offset++, ACC_OF)) << 16u;
-            oper->embedded.w |= ((uint32) read_b(pa + offset++, ACC_OF)) << 24u;
+            oper->embedded.w = (uint32) read_b(pa + offset++, ACC_IF);
+            oper->embedded.w |= ((uint32) read_b(pa + offset++, ACC_IF)) << 8u;
+            oper->embedded.w |= ((uint32) read_b(pa + offset++, ACC_IF)) << 16u;
+            oper->embedded.w |= ((uint32) read_b(pa + offset++, ACC_IF)) << 24u;
             break;
         case 0:
         case 2:
@@ -1609,21 +1704,21 @@ uint8 decode_instruction(instr *instr)
     case OP_NONE:
         break;
     case OP_BYTE:
-        instr->operands[0].embedded.b = read_b(pa + offset++, ACC_OF);
+        instr->operands[0].embedded.b = read_b(pa + offset++, ACC_IF);
         instr->operands[0].mode = 6;
         instr->operands[0].reg = 15;
         break;
     case OP_HALF:
-        instr->operands[0].embedded.h = read_b(pa + offset++, ACC_OF);
-        instr->operands[0].embedded.h |= read_b(pa + offset++, ACC_OF) << 8;
+        instr->operands[0].embedded.h = read_b(pa + offset++, ACC_IF);
+        instr->operands[0].embedded.h |= read_b(pa + offset++, ACC_IF) << 8;
         instr->operands[0].mode = 5;
         instr->operands[0].reg = 15;
         break;
     case OP_COPR:
-        instr->operands[0].embedded.w = (uint32) read_b(pa + offset++, ACC_OF);
-        instr->operands[0].embedded.w |= (uint32) read_b(pa + offset++, ACC_OF) << 8;
-        instr->operands[0].embedded.w |= (uint32) read_b(pa + offset++, ACC_OF) << 16;
-        instr->operands[0].embedded.w |= (uint32) read_b(pa + offset++, ACC_OF) << 24;
+        instr->operands[0].embedded.w = (uint32) read_b(pa + offset++, ACC_IF);
+        instr->operands[0].embedded.w |= (uint32) read_b(pa + offset++, ACC_IF) << 8;
+        instr->operands[0].embedded.w |= (uint32) read_b(pa + offset++, ACC_IF) << 16;
+        instr->operands[0].embedded.w |= (uint32) read_b(pa + offset++, ACC_IF) << 24;
         instr->operands[0].mode = 4;
         instr->operands[0].reg = 15;
 
@@ -1721,11 +1816,11 @@ static SIM_INLINE void cpu_context_switch_1(uint32 new_pcbp)
 
 void cpu_on_interrupt(uint16 vec)
 {
-    uint32 new_pcbp;
+    uint32 new_pcbp, new_pcbp_ptr;
 
     sim_debug(IRQ_MSG, &cpu_dev,
-              "[%08x] [cpu_on_interrupt] vec=%02x (%d)\n",
-              R[NUM_PC], vec, vec);
+              "[%08x] [cpu_on_interrupt] vec=%02x (%d)  csr_data=%x\n",
+              R[NUM_PC], vec, vec, csr_data);
 
     /*
      * "If a nonmaskable interrupt request is received, an auto-vector
@@ -1737,6 +1832,7 @@ void cpu_on_interrupt(uint16 vec)
         vec = 0;
     }
 
+    cpu_nmi = FALSE;
     cpu_km = TRUE;
 
     if (R[NUM_PSW] & PSW_QIE_MASK) {
@@ -1746,7 +1842,9 @@ void cpu_on_interrupt(uint16 vec)
         return;
     }
 
-    new_pcbp = read_w(0x8c + (4 * vec), ACC_AF);
+    new_pcbp_ptr = (uint32)0x8c + (4 * (uint32)vec);
+
+    new_pcbp = read_w(new_pcbp_ptr, ACC_AF);
 
     /* Save the old PCBP */
     irq_push_word(R[NUM_PCBP]);
@@ -1806,7 +1904,7 @@ t_stat sim_instr(void)
             return STOP_ESTK;
         }
 
-        if (cpu_unit.flags & UNIT_EXHALT) {
+        if (cpu_unit.flags & UNIT_EXBRK) {
             return STOP_EX;
         }
 
@@ -1902,7 +2000,7 @@ t_stat sim_instr(void)
         /* Set the correct IRQ state */
         cpu_calc_ints();
 
-        if (PSW_CUR_IPL < cpu_int_ipl) {
+        if (cpu_nmi || (PSW_CUR_IPL < cpu_int_ipl)) {
             cpu_on_interrupt(cpu_int_vec);
             for (i = 0; i < CIO_SLOTS; i++) {
                 if (cio[i].intr &&
@@ -1929,7 +2027,8 @@ t_stat sim_instr(void)
         }
 
         /* Reset the TM bits */
-        R[NUM_PSW] |= PSW_TM_MASK;
+        /* TODO: Figure out why we were doing this! */
+        /* R[NUM_PSW] |= PSW_TM_MASK; */
 
         /* Record the instruction for history */
         if (cpu_hist_size > 0) {
@@ -2135,6 +2234,7 @@ t_stat sim_instr(void)
         case BPT:
         case HALT:
             trap = BREAKPOINT_TRAP;
+            stop_reason = STOP_IBKPT;
             break;
         case BRH:
             pc_incr = sign_extend_h(dst->embedded.h);
@@ -2185,6 +2285,25 @@ t_stat sim_instr(void)
             R[NUM_AP] = a;
             pc_incr = 0;
             break;
+#if defined (REV3)
+        case CASWI:
+            a = cpu_read_op(src1);
+            b = cpu_read_op(src2);
+            c = cpu_read_op(dst);
+            result = c - b;
+
+            if (result == 0) {
+                cpu_write_op(src2, c);
+            } else {
+                cpu_write_op(dst, a);
+            }
+
+            cpu_set_n_flag((int32)result < 0);
+            cpu_set_z_flag(result == 0);
+            cpu_set_c_flag((uint32)b > (uint32)c);
+            cpu_set_v_flag_op(result, dst);
+            break;
+#endif
         case CFLUSH:
             break;
         case CALLPS:
@@ -2380,7 +2499,11 @@ t_stat sim_instr(void)
             cpu_set_c_flag(0);
             break;
         case MVERNO:
+#if defined (REV3)
+            R[0] = WE32200_VER;
+#else
             R[0] = WE32100_VER;
+#endif
             break;
         case ENBVJMP:
             if (cpu_execution_level() != EX_LVL_KERN) {
@@ -2479,21 +2602,21 @@ t_stat sim_instr(void)
             result = a >> b;
             /* Ensure the MSB is copied appropriately */
             switch (op_type(src2)) {
-                case WD:
-                    if (a & 0x80000000) {
-                        result |= shift_32_table[b + 1];
-                    }
-                    break;
-                case HW:
-                    if (a & 0x8000) {
-                        result |= shift_16_table[b + 1];
-                    }
-                    break;
-                case BT:
-                    if (a & 0x80) {
-                        result |= shift_8_table[b + 1];
-                    }
-                    break;
+            case WD:
+                if (a & 0x80000000) {
+                    result |= shift_32_table[b + 1];
+                }
+                break;
+            case HW:
+                if (a & 0x8000) {
+                    result |= shift_16_table[b + 1];
+                }
+                break;
+            case BT:
+                if (a & 0x80) {
+                    result |= shift_8_table[b + 1];
+                }
+                break;
             }
             cpu_write_op(dst, result);
             cpu_set_nz_flags(result, dst);
@@ -2545,6 +2668,20 @@ t_stat sim_instr(void)
             /* Finish push of PC and PSW */
             R[NUM_SP] += 8;
             pc_incr = 0;
+
+            /*
+             * NB: The processor manual claims that this is not a
+             * privileged instruction, and that it can be run from any
+             * processor level. That is not true. Diagnostics in the
+             * Rev 3 off-line processor diagnostics check to ensure
+             * that there is an exception raised when calling GATE in
+             * a non-privileged context.
+             */
+            if (cpu_execution_level() != EX_LVL_KERN) {
+                cpu_abort(NORMAL_EXCEPTION, PRIVILEGED_OPCODE);
+                break;
+            }
+
             break;
         case MCOMW:
         case MCOMH:
@@ -2608,6 +2745,9 @@ t_stat sim_instr(void)
         case MOVTRW:
             a = cpu_effective_address(src1);
             result = mmu_xlate_addr(a, ACC_MT);
+            sim_debug(EXECUTE_MSG, &cpu_dev,
+                      "[%08x] MOVTRW BEING EXECUTED. va=%08x pa=%08x dtype=%d etype=%d\n",
+                      R[NUM_PC], a, (uint32)result, src1->dtype, src1->etype);
             cpu_write_op(dst, result);
             cpu_set_nz_flags(result, dst);
             cpu_set_v_flag(0);
@@ -2846,11 +2986,6 @@ t_stat sim_instr(void)
             b = read_w(R[NUM_SP] - 8, ACC_AF);   /* PC  */
             abort_context = C_NONE;
             if ((a & PSW_CM_MASK) < (R[NUM_PSW] & PSW_CM_MASK)) {
-                sim_debug(EXECUTE_MSG, &cpu_dev,
-                          "[%08x] Illegal level change. New level=%d, Cur level=%d\n",
-                          R[NUM_PC],
-                          (a & PSW_CM_MASK) >> PSW_CM,
-                          (R[NUM_PSW] & PSW_CM_MASK) >> PSW_CM);
                 cpu_abort(NORMAL_EXCEPTION, ILLEGAL_LEVEL_CHANGE);
                 break;
             }
@@ -2874,7 +3009,6 @@ t_stat sim_instr(void)
 
             R[NUM_PSW] = a;
             R[NUM_PC] = b;
-
             R[NUM_SP] -= 8;
             pc_incr = 0;
             break;
@@ -3094,7 +3228,13 @@ t_stat sim_instr(void)
             cpu_set_v_flag_op(a, dst);
             break;
         default:
-            stop_reason = STOP_OPCODE;
+            if (cpu_unit.flags & UNIT_OPBRK) {
+                stop_reason = STOP_OPCODE;
+            }
+            sim_debug(EXECUTE_MSG, &cpu_dev,
+                      "[%08x] Illegal Opcode 0x%x (%s)\n",
+                      R[NUM_PC], inst.mn->opcode, inst.mn->mnemonic);
+            cpu_abort(NORMAL_EXCEPTION, ILLEGAL_OPCODE);
             break;
         };
 
@@ -3233,6 +3373,7 @@ static SIM_INLINE void cpu_perform_gate(uint32 index1, uint32 index2)
 {
     uint32 gate_l2, new_psw;
 
+    abort_context = C_NORMAL_GATE_VECTOR;
     cpu_km = TRUE;
 
     gate_l2 = read_w(index1, ACC_AF) + index2;
@@ -3258,6 +3399,7 @@ static SIM_INLINE void cpu_perform_gate(uint32 index1, uint32 index2)
     R[NUM_PSW] = new_psw;
 
     cpu_km = FALSE;
+    abort_context = C_NONE;
 }
 
 /*
@@ -3325,7 +3467,9 @@ static uint32 cpu_effective_address(operand *op)
         return read_w(R[op->reg] + sign_extend_b(op->embedded.b), ACC_AF);
     }
 
-    stop_reason = STOP_OPCODE;
+    if (cpu_unit.flags & UNIT_OPBRK) {
+        stop_reason = STOP_OPCODE;
+    }
 
     return 0;
 }
@@ -3503,9 +3647,13 @@ static void cpu_write_op(operand * op, t_uint64 val)
             return;
         }
 
-        /* Registers always get the full 32-bits written */
-
-        R[op->reg] = (uint32) val;
+        /* Registers always get the full 32-bits written, EXCEPT for
+        * the PSW, which has some Read-Only fields. */
+        if (op->reg == NUM_PSW) {
+            WRITE_PSW((uint32) val);
+        } else {
+            R[op->reg] = (uint32) val;
+        }
 
         return;
     }
@@ -3563,15 +3711,28 @@ static void cpu_calc_ints()
 
     /* If none was found, look for system board interrupts */
     if (csr_data & CSRPIR8) {
-        cpu_int_ipl = cpu_int_vec = CPU_PIR8_IPL;
+        cpu_int_ipl = cpu_int_vec = CPU_IPL_8;
     } else if (csr_data & CSRPIR9) {
-        cpu_int_ipl = cpu_int_vec = CPU_PIR9_IPL;
+        cpu_int_ipl = cpu_int_vec = CPU_IPL_9;
+#if defined (REV2)
     } else if (id_int() || (csr_data & CSRDISK)) {
-        cpu_int_ipl = cpu_int_vec = CPU_ID_IF_IPL;
+        cpu_int_ipl = cpu_int_vec = CPU_IPL_11;
+#elif defined (REV3)
+    } else if (if_irq) {
+        cpu_int_ipl = cpu_int_vec = CPU_IPL_11;
+#endif
     } else if ((csr_data & CSRUART) || (csr_data & CSRDMA)) {
-        cpu_int_ipl = cpu_int_vec = CPU_IU_DMA_IPL;
+        cpu_int_ipl = cpu_int_vec = CPU_IPL_13;
     } else if ((csr_data & CSRCLK) || (csr_data & CSRTIMO)) {
-        cpu_int_ipl = cpu_int_vec = CPU_TMR_IPL;
+        cpu_int_ipl = cpu_int_vec = CPU_IPL_15;
+#if defined (REV3)
+    } else if ((csr_data & CSRPWRDN) ||
+               (csr_data & CSROPINT15) ||
+               (csr_data & CSRMBERR) ||
+               (csr_data & CSRSBERR) ||
+               (csr_data & CSRUBUBF)) {
+        cpu_int_ipl = cpu_int_vec = CPU_IPL_15;
+#endif
     } else {
         cpu_int_ipl = cpu_int_vec = 0;
     }
@@ -3638,27 +3799,27 @@ static SIM_INLINE t_bool cpu_v_flag()
 static SIM_INLINE void cpu_set_z_flag(t_bool val)
 {
     if (val) {
-        R[NUM_PSW] = R[NUM_PSW] | PSW_Z_MASK;
+        R[NUM_PSW] |= PSW_Z_MASK;
     } else {
-        R[NUM_PSW] = R[NUM_PSW] & ~PSW_Z_MASK;
+        R[NUM_PSW] &= ~PSW_Z_MASK;
     }
 }
 
 static SIM_INLINE void cpu_set_n_flag(t_bool val)
 {
     if (val) {
-        R[NUM_PSW] = R[NUM_PSW] | PSW_N_MASK;
+        R[NUM_PSW] |= PSW_N_MASK;
     } else {
-        R[NUM_PSW] = R[NUM_PSW] & ~PSW_N_MASK;
+        R[NUM_PSW] &= ~PSW_N_MASK;
     }
 }
 
 static SIM_INLINE void cpu_set_c_flag(t_bool val)
 {
     if (val) {
-        R[NUM_PSW] = R[NUM_PSW] | PSW_C_MASK;
+        R[NUM_PSW] |= PSW_C_MASK;
     } else {
-        R[NUM_PSW] = R[NUM_PSW] & ~PSW_C_MASK;
+        R[NUM_PSW] &= ~PSW_C_MASK;
     }
 }
 
@@ -3684,12 +3845,12 @@ static SIM_INLINE void cpu_set_v_flag_op(t_uint64 val, operand *op)
 static SIM_INLINE void cpu_set_v_flag(t_bool val)
 {
     if (val) {
-        R[NUM_PSW] = R[NUM_PSW] | PSW_V_MASK;
+        R[NUM_PSW] |= PSW_V_MASK;
         if (R[NUM_PSW] & PSW_OE_MASK) {
             cpu_abort(NORMAL_EXCEPTION, INTEGER_OVERFLOW);
         }
     } else {
-        R[NUM_PSW] = R[NUM_PSW] & ~PSW_V_MASK;
+        R[NUM_PSW] &= ~PSW_V_MASK;
     }
 }
 
@@ -3821,19 +3982,28 @@ void cpu_abort(uint8 et, uint8 isc)
 
 CONST char *cpu_description(DEVICE *dptr)
 {
+#if defined (REV3)
+    return "3B2/600G CPU (WE 32200)";
+#else
     return "3B2/400 CPU (WE 32100)";
+#endif
 }
 
 t_stat cpu_help(FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cptr)
 {
+#if defined (REV3)
+    fprintf(st, "3B2/600G CPU Help\n\n");
+    fprintf(st, "The 3B2/600G CPU simulates a WE 32200 at 24 MHz.\n\n");
+#else
     fprintf(st, "3B2/400 CPU Help\n\n");
     fprintf(st, "The 3B2/400 CPU simulates a WE 32100 at 10 MHz.\n\n");
+#endif
     fprintf(st, "CPU options include the size of main memory.\n\n");
     if (dptr->modifiers) {
         MTAB *mptr;
         for (mptr = dptr->modifiers; mptr->mask != 0; mptr++) {
             if (mptr->valid == &cpu_set_size) {
-                fprintf(st, "   sim> SET CPU %4s             set memory size = %sB\n",
+                fprintf(st, "   sim> SET CPU %3s             set memory size = %sB\n",
                         mptr->mstring, mptr->mstring);
             }
         }
@@ -3856,8 +4026,12 @@ t_stat cpu_help(FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cptr
     fprintf(st, "   sim> SET CPU HISTORY=n        enable history, length = n\n");
     fprintf(st, "   sim> SHOW CPU HISTORY         print CPU history\n");
     fprintf(st, "   sim> SHOW CPU HISTORY=n       print last n entries of CPU history\n\n");
-    
-    fprintf(st, "Additional docuentation for the 3B2/400 Simulator is available on the web:\n\n");
+
+#if defined (REV3)
+    fprintf(st, "Additional documentation for the 3B2/600G Simulator is available on the web:\n\n");
+#else
+    fprintf(st, "Additional documentation for the 3B2/400 Simulator is available on the web:\n\n");
+#endif
     fprintf(st, "   https://loomcom.com/3b2/emulator.html\n\n");
 
     return SCPE_OK;

@@ -35,26 +35,30 @@
 #include "sim_tmxr.h"
 #include <setjmp.h>
 
-#if defined(REV3)
-#include "3b2_1000_defs.h"
-#else
-#include "3b2_400_defs.h"
-#include "3b2_400_cpu.h"
-#include "3b2_400_mau.h"
-#include "3b2_400_mmu.h"
-#include "3b2_400_stddev.h"
-#include "3b2_400_sys.h"
-#include "3b2_id.h"
-#endif
-
+#include "3b2_cpu.h"
 #include "3b2_io.h"
-#include "3b2_dmac.h"
+#include "3b2_mem.h"
 #include "3b2_if.h"
 #include "3b2_iu.h"
-
+#include "3b2_dmac.h"
 #include "3b2_ports.h"
 #include "3b2_ctc.h"
 #include "3b2_ni.h"
+#include "3b2_scsi.h"
+#include "3b2_sys.h"
+#include "3b2_stddev.h"
+
+#if defined (REV3)
+#include "3b2_rev3_defs.h"
+#include "3b2_rev3_csr.h"
+#include "3b2_rev3_mmu.h"
+#else
+#include "3b2_rev2_defs.h"
+#include "3b2_rev2_csr.h"
+#include "3b2_rev2_mmu.h"
+#include "3b2_id.h"
+#endif
+#include "3b2_mau.h"
 
 #ifndef FALSE
 #define FALSE 0
@@ -85,23 +89,31 @@ noret __libc_longjmp(jmp_buf buf, int val);
 #define UNUSED(x) ((void)((x)))
 #endif
 
-#define UNIT_V_EXHALT  (UNIT_V_UF + 0)
-#define UNIT_EXHALT    (1u << UNIT_V_EXHALT)
+#define ATOW(arr,i)    ((uint32)(arr)[i+3] + ((uint32)(arr)[i+2] << 8) + \
+                        ((uint32)(arr)[i+1] << 16) + ((uint32)(arr)[i] << 24))
+#define ATOH(arr,i)    ((uint32)(arr)[i+1] + ((uint32)(arr)[i] << 8))
+#define CSRBIT(bit,sc) {if (sc) {csr_data |= (bit);} else {csr_data &= ~(bit);}}
+
+#define UNIT_V_EXBRK   (UNIT_V_UF + 0)
+#define UNIT_V_OPBRK   (UNIT_V_UF + 1)
+#define UNIT_EXBRK     (1u << UNIT_V_EXBRK)
+#define UNIT_OPBRK     (1u << UNIT_V_OPBRK)
+
 #define EX_V_FLAG      1 << 21
 
 #define PHYS_MEM_BASE  0x2000000
 
 /* Simulator stop codes */
-#define STOP_RSRV      1
-#define STOP_IBKPT     2  /* Breakpoint encountered */
-#define STOP_OPCODE    3  /* Invalid opcode */
-#define STOP_IRQ       4  /* Interrupt */
-#define STOP_EX        5  /* Exception */
-#define STOP_ESTK      6  /* Exception stack too deep */
-#define STOP_MMU       7  /* Unimplemented MMU Feature */
-#define STOP_POWER     8  /* System power-off */
-#define STOP_LOOP      9  /* Infinite loop stop */
-#define STOP_ERR       10 /* Other error */
+#define STOP_RSRV      (SCPE_OK + 1)
+#define STOP_IBKPT     (SCPE_OK + 2)  /* Breakpoint encountered */
+#define STOP_OPCODE    (SCPE_OK + 3)  /* Invalid opcode */
+#define STOP_IRQ       (SCPE_OK + 4)  /* Interrupt */
+#define STOP_EX        (SCPE_OK + 5)  /* Exception */
+#define STOP_ESTK      (SCPE_OK + 6)  /* Exception stack too deep */
+#define STOP_MMU       (SCPE_OK + 7)  /* Unimplemented MMU Feature */
+#define STOP_POWER     (SCPE_OK + 8)  /* System power-off */
+#define STOP_LOOP      (SCPE_OK + 9)  /* Infinite loop stop */
+#define STOP_ERR       (SCPE_OK + 10) /* Other error */
 
 /* Debug flags */
 #define READ_MSG       0x0001
@@ -119,6 +131,30 @@ noret __libc_longjmp(jmp_buf buf, int val);
 #define CACHE_DBG      0x1000
 #define DECODE_DBG     0x2000
 
+/* Memory */
+#define MEMID_REV2_512K 0
+#define MEMID_REV2_1M   2
+#define MEMID_REV2_2M   1
+#define MEMID_REV2_4M   3
+#define MEMID_REV3_4M   6
+#define MEMID_REV3_16M  7
+#define MSIZ_512K       0x80000
+#define MSIZ_1M         0x100000
+#define MSIZ_2M         0x200000
+#define MSIZ_4M         0x400000
+#define MSIZ_8M         0x800000
+#define MSIZ_16M        0x1000000
+#define MSIZ_32M        0x2000000
+#define MSIZ_64M        0x4000000
+#define MADDR_SLOT_0    0x4d000
+#define MADDR_SLOT_1    0x4d004
+#define MADDR_SLOT_2    0x4d008
+#define MADDR_SLOT_3    0x4d00c
+
+#define TIMER_SANITY    0
+#define TIMER_INTERVAL  1
+#define TIMER_BUS       2
+
 /* Global symbols */
 
 extern volatile int32 stop_reason;
@@ -126,18 +162,21 @@ extern volatile int32 stop_reason;
 extern CIO_STATE      cio[CIO_SLOTS];
 
 extern instr         *cpu_instr;
+extern t_bool         cpu_nmi;
 extern uint32        *ROM;
 extern uint32        *RAM;
+#if defined (REV3)
+extern uint32         R[32];
+#else
 extern uint32         R[16];
+#endif
 extern REG            cpu_reg[];
 extern UNIT           cpu_unit;
 extern uint8          fault;
 extern t_bool         cpu_km;
-extern uint32         R[16];
 extern char           sim_name[];
 extern REG           *sim_PC;
 extern int32          sim_emax;
-extern uint16         csr_data;
 extern int32          tmxr_poll;
 
 extern DEBTAB         sys_deb_tab[];
@@ -154,6 +193,7 @@ extern DEVICE         mmu_dev;
 extern DEVICE         ni_dev;
 extern DEVICE         nvram_dev;
 extern DEVICE         ports_dev;
+extern DEVICE         ha_dev;
 extern DEVICE         timer_dev;
 extern DEVICE         tod_dev;
 extern DEVICE         tti_dev;
@@ -162,13 +202,17 @@ extern DEVICE         tto_dev;
 extern IU_PORT        iu_console;
 extern IU_PORT        iu_contty;
 extern IF_STATE       if_state;
+#if defined (REV2)
+extern ID_STATE       id_state;
+#endif
 extern MMU_STATE      mmu_state;
 extern DMA_STATE      dma_state;
 
-extern t_bool         id_drq;
 extern t_bool         if_irq;
 extern t_bool         cio_skip_seqbit;
 extern t_bool         iu_increment_a;
 extern t_bool         iu_increment_b;
+
+extern uint32         rom_size;
 
 #endif

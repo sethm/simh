@@ -1,4 +1,4 @@
-/* 3b2_400_sys.h: AT&T 3B2 Model 400 system-specific logic headers
+/* 3b2_defs.h: AT&T 3B2 Model 400 system definition
 
    Copyright (c) 2017, Seth J. Morabito
 
@@ -28,15 +28,45 @@
    from the author.
 */
 
-#ifndef _3B2_400_SYS_H_
-#define _3B2_400_SYS_H_
+#include "3b2_defs.h"
+#include "3b2_sys.h"
 
-#include "sim_defs.h"
+char sim_name[] = "AT&T 3B2/400";
 
-void full_reset();
-t_stat sim_load(FILE *fileref, CONST char *cptr, CONST char *fnam, int flag);
-t_stat parse_sym(CONST char *cptr, t_addr addr, UNIT *uptr, t_value *val,
-                  int32 sw);
-t_stat fprint_sym(FILE *of, t_addr addr, t_value *val, UNIT *uptr, int32 sw);
+DEVICE *sim_devices[] = {
+    &cpu_dev,
+    &mmu_dev,
+    &mau_dev,
+    &timer_dev,
+    &tod_dev,
+    &nvram_dev,
+    &csr_dev,
+    &tti_dev,
+    &tto_dev,
+    &contty_dev,
+    &iu_timer_dev,
+    &dmac_dev,
+    &if_dev,
+    &id_dev,
+    &ports_dev,
+    &ctc_dev,
+    &ni_dev,
+    NULL
+};
 
-#endif /* _3B2_400_SYS_H_ */
+void full_reset()
+{
+    cpu_reset(&cpu_dev);
+    mau_reset(&mau_dev);
+    tti_reset(&tti_dev);
+    contty_reset(&contty_dev);
+    iu_timer_reset(&iu_timer_dev);
+    timer_reset(&timer_dev);
+    if_reset(&if_dev);
+    id_reset(&id_dev);
+    csr_reset(&csr_dev);
+    ports_reset(&ports_dev);
+    ctc_reset(&ctc_dev);
+    ni_reset(&ni_dev);
+}
+

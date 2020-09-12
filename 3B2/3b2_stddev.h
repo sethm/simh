@@ -1,4 +1,4 @@
-/* 3b2_400_stddev.h: AT&T 3B2 Model 400 System Devices (Header)
+/* 3b2_stddev.h: AT&T 3B2 Common System Devices (Header)
 
    Copyright (c) 2017, Seth J. Morabito
 
@@ -47,19 +47,25 @@
 #define TIMER_REG_CTRL    0x0f
 #define TIMER_CLR_LATCH   0x13
 
-#define CLK_RW            0x30
-#define CLK_LSB           0x10
-#define CLK_MSB           0x20
-#define CLK_LMB           0x30
+#define TIMER_MODE(ctr)   (((ctr->ctrl) >> 1) & 7)
+#define TIMER_RW(ctr)     (((ctr->ctrl) >> 4) & 3)
+
+#define CLK_LATCH         0
+#define CLK_LSB           1
+#define CLK_MSB           2
+#define CLK_LMB           3
 
 struct timer_ctr {
     uint16 divider;
     uint16 val;
-    uint8  mode;
-    t_bool lmb;
+    uint8  ctrl_latch;
+    uint16 cnt_latch;
+    uint8  ctrl;
+    t_bool r_lmb;
+    t_bool w_lmb;
     t_bool enabled;
-    t_bool gate;
-    double stime;     /* Most recent start time of counter */
+    t_bool r_ctrl_latch;
+    t_bool r_cnt_latch;
 };
 
 /* NVRAM */
@@ -73,25 +79,18 @@ const char *nvram_description(DEVICE *dptr);
 t_stat nvram_help(FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cptr);
 void nvram_write(uint32 pa, uint32 val, size_t size);
 
-/* 8253 Timer */
+/* 82C53/82C54 Timer */
 t_stat timer_reset(DEVICE *dptr);
 uint32 timer_read(uint32 pa, size_t size);
 void timer_write(uint32 pa, uint32 val, size_t size);
 t_stat timer0_svc(UNIT *uptr);
 t_stat timer1_svc(UNIT *uptr);
 t_stat timer2_svc(UNIT *uptr);
-t_stat timer_set_shutdown(UNIT *uptr, int32 val, CONST char *cptr, void *desc);
-
-/* CSR */
-t_stat csr_svc(UNIT *uptr);
-t_stat csr_ex(t_value *vptr, t_addr exta, UNIT *uptr, int32 sw);
-t_stat csr_dep(t_value val, t_addr exta, UNIT *uptr, int32 sw);
-t_stat csr_reset(DEVICE *dptr);
-uint32 csr_read(uint32 pa, size_t size);
-void csr_write(uint32 pa, uint32 val, size_t size);
+void timer_tick(uint8 ctrnum);
+void timer_disable(uint8 ctrnum);
+void timer_enable(uint8 ctrnum);
 
 /* TOD */
-
 typedef struct tod_data {
     int32 delta;       /* Delta between simulated time and real time (sec.) */
     uint8 tsec;        /* 1/10 seconds */
@@ -106,8 +105,8 @@ typedef struct tod_data {
     uint8 wday;        /* Day of week (0-6) */
     uint8 unit_mon;    /* 1's column month */
     uint8 ten_mon;     /* 10's column month */
-    uint8 year;        /* 1, 2, 4, 8 shift register */
-    uint8 pad[3];      /* Padding to 32 bytes */
+    uint8 year;        /* Year */
+    uint8 ten_year;    /* 10's column year (Rev 3 only) */
 } TOD_DATA;
 
 void tod_resync();
@@ -118,5 +117,12 @@ t_stat tod_detach(UNIT *uptr);
 const char *tod_description(DEVICE *dptr);
 t_stat tod_help(FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cptr);
 uint32 tod_read(uint32 pa, size_t size);
-void tod_write(uint32, uint32 val, size_t size);
+void tod_write(uint32 pa, uint32 val, size_t size);
+
+#if defined(REV3)
+/* Fault Register (3B2 Rev3 only) */
+uint32 flt_read(uint32 pa, size_t size);
+void flt_write(uint32 pa, uint32 val, size_t size);
+#endif
+
 #endif
