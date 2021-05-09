@@ -1,4 +1,4 @@
-/* 3b2_400_stddev.h: AT&T 3B2 Model 400 System Devices implementation
+/* 3b2_stddev.h: AT&T 3B2 Common System Devices implementation
 
    Copyright (c) 2017, Seth J. Morabito
 
@@ -34,12 +34,14 @@
 
    - timer       8253 interval timer
    - nvram       Non-Volatile RAM
-   - csr         Control Status Registers
-   - tod         MM58174A Real-Time-Clock
+   - tod         MM58174A / MM58374A Real-Time-Clock
 */
 
+#include <3b2_rev3_defs.h>
+#include <time.h>
+
 #include "3b2_defs.h"
-#include "3b2_400_stddev.h"
+#include "3b2_stddev.h"
 
 DEBTAB sys_deb_tab[] = {
     { "INIT",       INIT_MSG,       "Init"              },
@@ -57,171 +59,8 @@ uint32 *NVRAM = NULL;
 
 int32 tmxr_poll = 16667;
 
-/* CSR */
-
-uint16 csr_data;
-
-BITFIELD csr_bits[] = {
-    BIT(IOF),
-    BIT(DMA),
-    BIT(DISK),
-    BIT(UART),
-    BIT(PIR9),
-    BIT(PIR8),
-    BIT(CLK),
-    BIT(IFLT),
-    BIT(ITIM),
-    BIT(FLOP),
-    BIT(NA),
-    BIT(LED),
-    BIT(ALGN),
-    BIT(RRST),
-    BIT(PARE),
-    BIT(TIMO),
-    ENDBITS
-};
-
-UNIT csr_unit = {
-    UDATA(NULL, UNIT_FIX, CSRSIZE)
-};
-
-REG csr_reg[] = {
-    { HRDATADF(DATA, csr_data, 16, "CSR Data", csr_bits) },
-    { NULL }
-};
-
-DEVICE csr_dev = {
-    "CSR", &csr_unit, csr_reg, NULL,
-    1, 16, 8, 4, 16, 32,
-    &csr_ex, &csr_dep, &csr_reset,
-    NULL, NULL, NULL, NULL,
-    DEV_DEBUG, 0, sys_deb_tab
-};
-
-t_stat csr_ex(t_value *vptr, t_addr exta, UNIT *uptr, int32 sw)
-{
-    return SCPE_OK;
-}
-
-t_stat csr_dep(t_value val, t_addr exta, UNIT *uptr, int32 sw)
-{
-    return SCPE_OK;
-}
-
-t_stat csr_reset(DEVICE *dptr)
-{
-    csr_data = 0;
-    return SCPE_OK;
-}
-
-uint32 csr_read(uint32 pa, size_t size)
-{
-    uint32 reg = pa - CSRBASE;
-
-    sim_debug(READ_MSG, &csr_dev,
-              "[%08x] CSR=%04x\n",
-              R[NUM_PC], csr_data);
-
-    switch (reg) {
-    case 0x2:
-        if (size == 8) {
-            return (csr_data >> 8) & 0xff;
-        } else {
-            return csr_data;
-        }
-    case 0x3:
-        return csr_data & 0xff;
-    default:
-        return 0;
-    }
-}
-
-void csr_write(uint32 pa, uint32 val, size_t size)
-{
-    uint32 reg = pa - CSRBASE;
-
-    switch (reg) {
-    case 0x03:    /* Clear Bus Timeout Error */
-        csr_data &= ~CSRTIMO;
-        break;
-    case 0x07:    /* Clear Memory Parity Error */
-        csr_data &= ~CSRPARE;
-        break;
-    case 0x0b:    /* Set System Reset Request */
-        full_reset();
-        cpu_boot(0, &cpu_dev);
-        break;
-    case 0x0f:    /* Clear Memory Alignment Fault */
-        csr_data &= ~CSRALGN;
-        break;
-    case 0x13:    /* Set Failure LED */
-        csr_data |= CSRLED;
-        break;
-    case 0x17:    /* Clear Failure LED */
-        csr_data &= ~CSRLED;
-        break;
-    case 0x1b:    /* Set Floppy Motor On */
-        csr_data |= CSRFLOP;
-        break;
-    case 0x1f:    /* Clear Floppy Motor On */
-        csr_data &= ~CSRFLOP;
-        break;
-    case 0x23:    /* Set Inhibit Timers */
-        sim_debug(WRITE_MSG, &csr_dev,
-                  "[%08x] SET INHIBIT TIMERS\n", R[NUM_PC]);
-        csr_data |= CSRITIM;
-        break;
-    case 0x27:    /* Clear Inhibit Timers */
-        sim_debug(WRITE_MSG, &csr_dev,
-                  "[%08x] CLEAR INHIBIT TIMERS\n", R[NUM_PC]);
-
-        /* A side effect of clearing the timer inhibit bit is to cause
-         * a simulated "tick" of any active timers.  This is a hack to
-         * make diagnostics pass. This is not 100% accurate, but it
-         * makes SVR3 and DGMON tests happy.
-         */
-
-        if (TIMERS[0].gate && TIMERS[0].enabled) {
-            TIMERS[0].val = TIMERS[0].divider - 1;
-        }
-
-        if (TIMERS[1].gate && TIMERS[1].enabled) {
-            TIMERS[1].val = TIMERS[1].divider - 1;
-        }
-
-        if (TIMERS[2].gate && TIMERS[2].enabled) {
-            TIMERS[2].val = TIMERS[2].divider - 1;
-        }
-
-        csr_data &= ~CSRITIM;
-        break;
-    case 0x2b:    /* Set Inhibit Faults */
-        csr_data |= CSRIFLT;
-        break;
-    case 0x2f:    /* Clear Inhibit Faults */
-        csr_data &= ~CSRIFLT;
-        break;
-    case 0x33:    /* Set PIR9 */
-        csr_data |= CSRPIR9;
-        break;
-    case 0x37:    /* Clear PIR9 */
-        csr_data &= ~CSRPIR9;
-        break;
-    case 0x3b:    /* Set PIR8 */
-        csr_data |= CSRPIR8;
-        break;
-    case 0x3f:    /* Clear PIR8 */
-        csr_data &= ~CSRPIR8;
-        break;
-    default:
-        break;
-    }
-}
-
-/* NVRAM */
-
 UNIT nvram_unit = {
-    UDATA(NULL, UNIT_FIX+UNIT_BINK, NVRAMSIZE)
+    UDATA(NULL, UNIT_FIX+UNIT_BINK, NVRSIZE)
 };
 
 REG nvram_reg[] = {
@@ -246,7 +85,7 @@ t_stat nvram_ex(t_value *vptr, t_addr exta, UNIT *uptr, int32 sw)
         return SCPE_ARG;
     }
 
-    if (addr >= NVRAMSIZE) {
+    if (addr >= NVRSIZE) {
         return SCPE_NXM;
     }
 
@@ -263,7 +102,7 @@ t_stat nvram_dep(t_value val, t_addr exta, UNIT *uptr, int32 sw)
         return SCPE_ARG;
     }
 
-    if (addr >= NVRAMSIZE) {
+    if (addr >= NVRSIZE) {
         return SCPE_NXM;
     }
 
@@ -275,8 +114,8 @@ t_stat nvram_dep(t_value val, t_addr exta, UNIT *uptr, int32 sw)
 t_stat nvram_reset(DEVICE *dptr)
 {
     if (NVRAM == NULL) {
-        NVRAM = (uint32 *)calloc(NVRAMSIZE >> 2, sizeof(uint32));
-        memset(NVRAM, 0, sizeof(uint32) * NVRAMSIZE >> 2);
+        NVRAM = (uint32 *)calloc(NVRSIZE >> 2, sizeof(uint32));
+        memset(NVRAM, 0, sizeof(uint32) * NVRSIZE >> 2);
         nvram_unit.filebuf = NVRAM;
     }
 
@@ -345,7 +184,7 @@ t_stat nvram_detach(UNIT *uptr)
 
 uint32 nvram_read(uint32 pa, size_t size)
 {
-    uint32 offset = pa - NVRAMBASE;
+    uint32 offset = pa & 0xfff;
     uint32 data = 0;
     uint32 sc = (~(offset & 3) << 3) & 0x1f;
 
@@ -370,7 +209,7 @@ uint32 nvram_read(uint32 pa, size_t size)
 
 void nvram_write(uint32 pa, uint32 val, size_t size)
 {
-    uint32 offset = pa - NVRAMBASE;
+    uint32 offset = pa & 0xfff;
     uint32 index = offset >> 2;
     uint32 sc, mask;
 
@@ -394,20 +233,58 @@ void nvram_write(uint32 pa, uint32 val, size_t size)
 }
 
 /*
- * 8253 Timer.
+ * 82C53/82C54 Timer.
  *
- * The 8253 Timer IC has three interval timers, which we treat here as
- * three units.
+ * The 82C53 (Rev2)/82C54 (Rev3) Timer IC has three interval timers,
+ * which we treat here as three units.
  *
- * Note that this simulation is very specific to the 3B2, and not
- * usable as a general purpose 8253 simulator.
+ * In the 3B2, the three timers are assigned specific purposes:
  *
- */
-
-/*
- * The three timers, (A, B, C) run at different
- * programmatially controlled frequencies, so each must be
- * handled through a different service routine.
+ *  - Timer 0: SYSTEM SANITY TIMER. This timer is normally loaded with
+ *             a short timeout and allowed to run. If it times out, it
+ *             will generate an interrupt and cause a system
+ *             error. Software resets the timer regularly to ensure
+ *             that it does not time out.  It is fed by a 10 kHz
+ *             clock, so each single counting step of this timer is
+ *             100 microseconds.
+ *
+ *  - Timer 1: UNIX INTERVAL TIMER. This is the main timer that drives
+ *             process switching in Unix. It operates at a fixed rate,
+ *             and the counter is set up by Unix to generate an
+ *             interrupt once every 10 milliseconds. The timer is fed
+ *             by a 100 kHz clock, so each single counting step of
+ *             this timer is 10 microseconds.
+ *
+ *  - Timer 2: BUS TIMEOUT TIMER. This timer is reset every time the
+ *             IO bus is accessed, and then stopped when the IO bus
+ *             responds. It is mainly used to determine when the IO
+ *             bus is hung (e.g., no card is installed in a given
+ *             slot, so nothing can respond). When it times out, it
+ *             generates an interrupt. It is fed by a 500 kHz clock,
+ *             so each single counting step of this timer is 2
+ *             microseconds.
+ *
+ *
+ * Implementaiton Notes
+ * ====================
+ *
+ * In general, no attempt has been made to create an accurate
+ * emulation of the 82C53/82C54 timer. This implementation is truly
+ * built for the 3B2, and even more specifically for System V Unix,
+ * which is the only operating system ever to have been ported to the
+ * 3B2.
+ *
+ *  - The Bus Timeout Timer is not implemented other than a stub that
+ *    is designed to pass hardware diagnostics. The simulator IO
+ *    subsystem always sets the correct interrupt directly if the bus
+ *    will not respond.
+ *
+ *  - The System Sanity Timer is also not implemented other than a
+ *    stub to pass diagnostics.
+ *
+ *  - The main Unix Interval Timer is implemented as a true SIMH clock
+ *    when set up for the correct mode. In other modes, it likewise
+ *    implements a stub designed to pass diagnostics.
  */
 
 UNIT timer_unit[] = {
@@ -420,23 +297,20 @@ UNIT timer_unit[] = {
 UNIT *timer_clk_unit = &timer_unit[1];
 
 REG timer_reg[] = {
-    { HRDATAD(DIVA,  TIMERS[0].divider, 16, "Divider A") },
-    { HRDATAD(STA,   TIMERS[0].mode,    8,  "Mode A")   },
-    { HRDATAD(DIVB,  TIMERS[1].divider, 16, "Divider B") },
-    { HRDATAD(STB,   TIMERS[1].mode,    8,  "Mode B")   },
-    { HRDATAD(DIVC,  TIMERS[2].divider, 16, "Divider C") },
-    { HRDATAD(STC,   TIMERS[2].mode,    8,  "Mode C")   },
+    { HRDATAD(DIV0,   TIMERS[0].divider, 16, "Divider (0)") },
+    { HRDATAD(COUNT0, TIMERS[0].val,     16, "Count (0)")   },
+    { HRDATAD(CTRL0,  TIMERS[0].ctrl,    8,  "Control (0)") },
+    { HRDATAD(DIV1,   TIMERS[1].divider, 16, "Divider (1)") },
+    { HRDATAD(COUNT1, TIMERS[1].val,     16, "Count (1)")   },
+    { HRDATAD(CTRL1,  TIMERS[1].ctrl,    8,  "Control (1)") },
+    { HRDATAD(DIV2,   TIMERS[2].divider, 16, "Divider (2)") },
+    { HRDATAD(COUNT2, TIMERS[2].val,     16, "Count (2)")   },
+    { HRDATAD(CTRL2,  TIMERS[2].ctrl,    8,  "Control (2)") },
     { NULL }
 };
 
-MTAB timer_mod[] = {
-    { MTAB_XTD|MTAB_VDV|MTAB_VALR|MTAB_NC, 0, NULL, "SHUTDOWN",
-      &timer_set_shutdown, NULL, NULL, "Soft Power Shutdown" },
-    { 0 }
-};
-
 DEVICE timer_dev = {
-    "TIMER", timer_unit, timer_reg, timer_mod,
+    "TIMER", timer_unit, timer_reg, NULL,
     1, 16, 8, 4, 16, 32,
     NULL, NULL, &timer_reset,
     NULL, NULL, NULL, NULL,
@@ -453,29 +327,79 @@ t_stat timer_reset(DEVICE *dptr) {
         timer_unit[i].tmr = (void *)&TIMERS[i];
     }
 
-    /* Timer 1 gate is always active */
-    TIMERS[1].gate = 1;
-
+    /* TODO: I don't think this is right. Verify. */
+    /*
     if (!sim_is_running) {
         t = sim_rtcn_init_unit(timer_clk_unit, TPS_CLK, TMR_CLK);
-        sim_activate_after(timer_clk_unit, 1000000 / t);
+        sim_activate_after_abs(timer_clk_unit, 1000000 / t);
     }
+    */
 
     return SCPE_OK;
 }
 
-t_stat timer_set_shutdown(UNIT *uptr, int32 val, CONST char* cptr, void* desc)
+static void timer_activate(uint8 ctrnum)
 {
-    struct timer_ctr *sanity = (struct timer_ctr *)timer_unit[0].tmr;
+    struct timer_ctr *ctr;
 
+    ctr = &TIMERS[ctrnum];
+
+    switch (ctrnum) {
+    case TIMER_SANITY:
+        if ((csr_data & CSRISTIM) == 0) {
+            sim_debug(EXECUTE_MSG, &timer_dev,
+                      "[%08x] SANITY TIMER: Activating after %d steps\n",
+                      R[NUM_PC], ctr->val);
+            sim_activate_abs(&timer_unit[ctrnum], ctr->val);
+            ctr->val--;
+        } else {
+            sim_debug(EXECUTE_MSG, &timer_dev,
+                      "[%08x] SANITY TIMER: Currently disabled, not starting\n",
+                      R[NUM_PC]);
+        }
+        break;
+    case TIMER_INTERVAL:
+        if ((csr_data & CSRITIM) == 0) {
+            sim_debug(EXECUTE_MSG, &timer_dev,
+                      "[%08x] INTERVAL TIMER: Activating after %d ms\n",
+                      R[NUM_PC], ctr->val);
+            sim_activate_after_abs(&timer_unit[ctrnum], ctr->val);
+            ctr->val--;
+        } else {
+            sim_debug(EXECUTE_MSG, &timer_dev,
+                      "[%08x] INTERVAL TIMER: Currently disabled, not starting\n",
+                      R[NUM_PC]);
+        }
+        break;
+    case TIMER_BUS:
+        if ((csr_data & CSRITIMO) == 0) {
+            sim_debug(EXECUTE_MSG, &timer_dev,
+                      "[%08x] BUS TIMER: Activating after %d steps\n",
+                      R[NUM_PC], ctr->val);
+            sim_activate_abs(&timer_unit[ctrnum], (ctr->val - 2));
+            ctr->val -= 2;
+        } else {
+            sim_debug(EXECUTE_MSG, &timer_dev,
+                      "[%08x] BUS TIMER: Currently disabled, not starting\n",
+                      R[NUM_PC]);
+        }
+        break;
+    default:
+        break;
+    }
+}
+
+void timer_enable(uint8 ctrnum)
+{
+    timer_activate(ctrnum);
+}
+
+void timer_disable(uint8 ctrnum)
+{
     sim_debug(EXECUTE_MSG, &timer_dev,
-              "[%08x] Setting sanity timer to 0 for shutdown.\n", R[NUM_PC]);
-
-    sanity->val = 0;
-    csr_data &= ~CSRCLK;
-    csr_data |= CSRTIMO;
-
-    return SCPE_OK;
+              "[%08x] Disabling timer %d\n",
+              R[NUM_PC], ctrnum);
+    sim_cancel(&timer_unit[ctrnum]);
 }
 
 /*
@@ -488,13 +412,21 @@ t_stat timer0_svc(UNIT *uptr)
 
     ctr = (struct timer_ctr *)uptr->tmr;
 
-    time = ctr->divider * TIMER_STP_US;
-
-    if (time == 0) {
-        time = TIMER_STP_US;
+#if defined (REV3)
+    if (ctr->enabled) {
+        sim_debug(EXECUTE_MSG, &timer_dev,
+                  "[%08x] TIMER 0 COMPLETION.\n",
+                  R[NUM_PC]);
+        if (!(csr_data & CSRISTIM)) {
+            sim_debug(EXECUTE_MSG, &timer_dev,
+                      "[%08x] TIMER 0 NMI IRQ.\n",
+                      R[NUM_PC]);
+            ctr->val = 0xffff;
+            cpu_nmi = TRUE;
+            CSRBIT(CSRSTIMO, TRUE);
+        }
     }
-
-    sim_activate_after_abs(uptr, time);
+#endif
 
     return SCPE_OK;
 }
@@ -511,7 +443,9 @@ t_stat timer1_svc(UNIT *uptr)
 
     if (ctr->enabled && !(csr_data & CSRITIM)) {
         /* Fire the IPL 15 clock interrupt */
-        csr_data |= CSRCLK;
+        sim_debug(EXECUTE_MSG, &timer_dev,
+                  ">>> timer1_svc!\n");
+        CSRBIT(CSRCLK, TRUE);
     }
 
     t = sim_rtcn_calb(TPS_CLK, TMR_CLK);
@@ -527,17 +461,24 @@ t_stat timer1_svc(UNIT *uptr)
 t_stat timer2_svc(UNIT *uptr)
 {
     struct timer_ctr *ctr;
-    int32 time;
-
     ctr = (struct timer_ctr *)uptr->tmr;
 
-    time = ctr->divider * TIMER_STP_US;
-
-    if (time == 0) {
-        time = TIMER_STP_US;
+#if defined (REV3)
+    if (ctr->enabled && TIMER_RW(ctr) == CLK_LSB) {
+        sim_debug(EXECUTE_MSG, &timer_dev,
+                  "[%08x] TIMER 2 COMPLETION.\n",
+                  R[NUM_PC]);
+        if (!(csr_data & CSRITIMO)) {
+            sim_debug(EXECUTE_MSG, &timer_dev,
+                      "[%08x] TIMER 2 IRQ.\n",
+                      R[NUM_PC]);
+            ctr->val = 0xffff;
+            CSRBIT(CSRTIMO, TRUE);
+            /* Also trigger a bus abort */
+            cpu_abort(NORMAL_EXCEPTION, EXTERNAL_MEMORY_FAULT);
+        }
     }
-
-    sim_activate_after_abs(uptr, time);
+#endif
 
     return SCPE_OK;
 }
@@ -546,7 +487,7 @@ uint32 timer_read(uint32 pa, size_t size)
 {
     uint32 reg;
     uint16 ctr_val;
-    uint8 ctrnum;
+    uint8 ctrnum, retval;
     struct timer_ctr *ctr;
 
     reg = pa - TIMERBASE;
@@ -559,35 +500,66 @@ uint32 timer_read(uint32 pa, size_t size)
     case TIMER_REG_DIVC:
         ctr_val = ctr->val;
 
-        if (ctr_val != ctr->divider) {
+        switch (TIMER_RW(ctr)) {
+        case CLK_LSB:
+            retval = ctr_val & 0xff;
             sim_debug(READ_MSG, &timer_dev,
-                      "[%08x] >>> ctr_val = %04x, ctr->divider = %04x\n",
-                      R[NUM_PC], ctr_val, ctr->divider);
+                      "[%08x] [%d] [LSB] val=%d (0x%x)\n",
+                      R[NUM_PC], ctrnum, retval, retval);
+            break;
+        case CLK_MSB:
+            retval = (ctr_val & 0xff00) >> 8;
+            sim_debug(READ_MSG, &timer_dev,
+                      "[%08x] [%d] [MSB] val=%d (0x%x)\n",
+                      R[NUM_PC], ctrnum, retval, retval);
+            break;
+        case CLK_LMB:
+            if (ctr->r_ctrl_latch) {
+                ctr->r_ctrl_latch = FALSE;
+                retval = ctr->ctrl_latch;
+                sim_debug(READ_MSG, &timer_dev,
+                          "[%08x] [%d] [LATCH CTRL] val=%d (0x%x)\n",
+                          R[NUM_PC], ctrnum, retval, retval);
+            } else if (ctr->r_cnt_latch) {
+                if (ctr->r_lmb) {
+                    ctr->r_lmb = FALSE;
+                    retval = (ctr->cnt_latch & 0xff00) >> 8;
+                    ctr->r_cnt_latch = FALSE;
+                    sim_debug(READ_MSG, &timer_dev,
+                              "[%08x] [%d] [LATCH DATA MSB] val=%d (0x%x)\n",
+                              R[NUM_PC], ctrnum, retval, retval);
+                } else {
+                    ctr->r_lmb = TRUE;
+                    retval = ctr->cnt_latch & 0xff;
+                    sim_debug(READ_MSG, &timer_dev,
+                              "[%08x] [%d] [LATCH DATA LSB] val=%d (0x%x)\n",
+                              R[NUM_PC], ctrnum, retval, retval);
+                }
+            } else if (ctr->r_lmb) {
+                ctr->r_lmb = FALSE;
+                retval = (ctr_val & 0xff00) >> 8;
+                sim_debug(READ_MSG, &timer_dev,
+                          "[%08x] [%d] [LMB - MSB] val=%d (0x%x)\n",
+                          R[NUM_PC], ctrnum, retval, retval);
+            } else {
+                ctr->r_lmb = TRUE;
+                retval = ctr_val & 0xff;
+                sim_debug(READ_MSG, &timer_dev,
+                          "[%08x] [%d] [LMB - LSB] val=%d (0x%x)\n",
+                          R[NUM_PC], ctrnum, retval, retval);
+            }
+            break;
+        default:
+            retval = 0;
         }
 
-        switch (ctr->mode & CLK_RW) {
-        case CLK_LSB:
-            return ctr_val & 0xff;
-        case CLK_MSB:
-            return (ctr_val & 0xff00) >> 8;
-        case CLK_LMB:
-            if (ctr->lmb) {
-                ctr->lmb = FALSE;
-                return (ctr_val & 0xff00) >> 8;
-            } else {
-                ctr->lmb = TRUE;
-                return ctr_val & 0xff;
-            }
-        default:
-            return 0;
-        }
-        break;
+        return retval;
     case TIMER_REG_CTRL:
-        return ctr->mode;
+        return ctr->ctrl;
     case TIMER_CLR_LATCH:
         /* Clearing the timer latch has a side-effect
            of also clearing pending interrupts */
-        csr_data &= ~CSRCLK;
+        CSRBIT(CSRCLK, FALSE);
         return 0;
     default:
         /* Unhandled */
@@ -598,48 +570,47 @@ uint32 timer_read(uint32 pa, size_t size)
     }
 }
 
-void handle_timer_write(uint8 ctrnum, uint32 val)
+static void handle_timer_write(uint8 ctrnum, uint32 val)
 {
     struct timer_ctr *ctr;
+    UNIT *unit = &timer_unit[ctrnum];
 
     ctr = &TIMERS[ctrnum];
-    switch(ctr->mode & 0x30) {
-    case 0x10:
-        ctr->divider &= 0xff00;
-        ctr->divider |= val & 0xff;
+    ctr->enabled = TRUE;
+
+    switch(TIMER_RW(ctr)) {
+    case CLK_LSB:
+        ctr->divider = val & 0xff;
         ctr->val = ctr->divider;
-        ctr->enabled = TRUE;
-        ctr->stime = sim_gtime();
-        sim_cancel(timer_clk_unit);
-        sim_activate_after_abs(timer_clk_unit, ctr->divider * TIMER_STP_US);
+        sim_debug(WRITE_MSG, &timer_dev,
+                  "[%08x] [%d] [LSB] val=%d (0x%x)\n",
+                  R[NUM_PC], ctrnum, val & 0xff, val & 0xff);
+        timer_activate(ctrnum);
         break;
-    case 0x20:
-        ctr->divider &= 0x00ff;
-        ctr->divider |= (val & 0xff) << 8;
+    case CLK_MSB:
+        ctr->divider = (val & 0xff) << 8;
         ctr->val = ctr->divider;
-        ctr->enabled = TRUE;
-        ctr->stime = sim_gtime();
-        /* Kick the timer to get the new divider value */
-        sim_cancel(timer_clk_unit);
-        sim_activate_after_abs(timer_clk_unit, ctr->divider * TIMER_STP_US);
+        sim_debug(WRITE_MSG, &timer_dev,
+                  "[%08x] [%d] [MSB] val=%d (0x%x)\n",
+                  R[NUM_PC], ctrnum, val & 0xff, val & 0xff);
+        timer_activate(ctrnum);
         break;
-    case 0x30:
-        if (ctr->lmb) {
-            ctr->lmb = FALSE;
+    case CLK_LMB:
+        if (ctr->w_lmb) {
+            ctr->w_lmb = FALSE;
             ctr->divider = (uint16) ((ctr->divider & 0x00ff) | ((val & 0xff) << 8));
             ctr->val = ctr->divider;
-            ctr->enabled = TRUE;
-            ctr->stime = sim_gtime();
-            sim_debug(READ_MSG, &timer_dev,
-                      "[%08x] Write timer %d val LMB (MSB): %02x\n",
-                      R[NUM_PC], ctrnum, val & 0xff);
-            /* Kick the timer to get the new divider value */
-            sim_cancel(timer_clk_unit);
-            sim_activate_after_abs(timer_clk_unit, ctr->divider * TIMER_STP_US);
+            sim_debug(WRITE_MSG, &timer_dev,
+                      "[%08x] [%d] [LMB - MSB] val=%d (0x%x)\n",
+                      R[NUM_PC], ctrnum, val & 0xff, val & 0xff);
+            timer_activate(ctrnum);
         } else {
-            ctr->lmb = TRUE;
+            ctr->w_lmb = TRUE;
             ctr->divider = (ctr->divider & 0xff00) | (val & 0xff);
             ctr->val = ctr->divider;
+            sim_debug(WRITE_MSG, &timer_dev,
+                      "[%08x] [%d] [LMB - LSB] val=%d (0x%x)\n",
+                      R[NUM_PC], ctrnum, val & 0xff, val & 0xff);
         }
         break;
     default:
@@ -668,33 +639,75 @@ void timer_write(uint32 pa, uint32 val, size_t size)
     case TIMER_REG_CTRL:
         /* The counter number is in bits 6 and 7 */
         ctrnum = (val >> 6) & 3;
-        if (ctrnum > 2) {
+        if (ctrnum == 3) {
             sim_debug(WRITE_MSG, &timer_dev,
-                      "[%08x] WARNING: Write to invalid counter: %d\n",
-                      R[NUM_PC], ctrnum);
-            return;
+                      "[%08x] READ BACK COMMAND. DATA=%02x\n",
+                      R[NUM_PC], val);
+            if (val & 2) {
+                ctr = &TIMERS[0];
+                if ((val & 0x20) == 0) {
+                    ctr->ctrl_latch = (uint16) TIMERS[2].ctrl;
+                    ctr->r_ctrl_latch = TRUE;
+                }
+                if ((val & 0x20) == 0) {
+                    ctr->cnt_latch = ctr->val;
+                    ctr->r_cnt_latch = TRUE;
+                }
+            }
+            if (val & 4) {
+                ctr = &TIMERS[1];
+                if ((val & 0x10) == 0) {
+                    ctr->ctrl_latch = (uint16) TIMERS[2].ctrl;
+                    ctr->r_ctrl_latch = TRUE;
+                }
+                if ((val & 0x20) == 0) {
+                    ctr->cnt_latch = ctr->val;
+                    ctr->r_cnt_latch = TRUE;
+                }
+            }
+            if (val & 8) {
+                ctr = &TIMERS[2];
+                if ((val & 0x10) == 0) {
+                    ctr->ctrl_latch = (uint16) TIMERS[2].ctrl;
+                    ctr->r_ctrl_latch = TRUE;
+                }
+                if ((val & 0x20) == 0) {
+                    ctr->cnt_latch = ctr->val;
+                    ctr->r_cnt_latch = TRUE;
+                }
+            }
+        } else {
+            sim_debug(WRITE_MSG, &timer_dev,
+                      "[%08x] Timer Control Write: timer %d => %02x\n",
+                      R[NUM_PC], ctrnum, val & 0xff);
+            ctr = &TIMERS[ctrnum];
+            ctr->ctrl = (uint8) val;
+            ctr->enabled = FALSE;
+            ctr->w_lmb = FALSE;
+            ctr->r_lmb = FALSE;
+            ctr->val = 0xffff;
+            ctr->divider = 0xffff;
         }
-        ctr = &TIMERS[ctrnum];
-        ctr->mode = (uint8) val;
-        ctr->enabled = FALSE;
-        ctr->lmb = FALSE;
         break;
     case TIMER_CLR_LATCH:
         sim_debug(WRITE_MSG, &timer_dev,
                   "[%08x] unexpected write to clear timer latch\n",
                   R[NUM_PC]);
         break;
+    default:
+        sim_debug(WRITE_MSG, &timer_dev,
+                  "[%08x] unknown timer register: %d\n",
+                  R[NUM_PC], reg);
     }
 }
 
 /*
- * MM58174A Time Of Day Clock
+ * MM58174A Time Of Day Clock (Rev 2) /
+ * MM58274C Time Of Day Clock (Rev 3)
  *
- * Despite its name, this device is not used by the 3B2 as a clock. It
- * is only used to store the current date and time between boots. It
- * is set when an operator changes the date and time. Is is read at
- * boot time. Therefore, we do not need to treat it as a clock or
- * timer device here.
+ * This is a battery-backed real time clock used to store the current
+ * date and time between boots. It is set when an operator changes the
+ * date and time. Is is read at boot time.
  */
 
 UNIT tod_unit = {
@@ -706,7 +719,7 @@ DEVICE tod_dev = {
     1, 16, 8, 4, 16, 32,
     NULL, NULL, &tod_reset,
     NULL, &tod_attach, &tod_detach,
-    NULL, 0, 0, sys_deb_tab, NULL, NULL,
+    NULL, DEV_DEBUG, 0, sys_deb_tab, NULL, NULL,
     &tod_help, NULL, NULL,
     &tod_description
 };
@@ -781,7 +794,9 @@ void tod_resync()
     td->ten_mon = (tm.tm_mon + 1) / 10;
     td->unit_day = tm.tm_mday % 10;
     td->ten_day = tm.tm_mday / 10;
+#ifdef REV2
     td->year = 1 << ((tm.tm_year - 1) % 4);
+#endif
 }
 
 /*
@@ -806,6 +821,7 @@ void tod_update_delta()
     tm.tm_mon = ((td->ten_mon * 10) + td->unit_mon) - 1;
     tm.tm_mday = (td->ten_day * 10) + td->unit_day;
 
+#ifdef REV2
     /* We're forced to do this weird arithmetic because the TOD chip
      * used by the 3B2 does not store the year. It only stores the
      * offset from the nearest leap year. */
@@ -825,6 +841,12 @@ void tod_update_delta()
     default:
         break;
     }
+#else
+    tm.tm_year = (td->ten_year * 10) + td->year;
+    sim_debug(EXECUTE_MSG, &tod_dev,
+              "[%08x] Updating TOD delta. td->ten_year=%d td->year=%d tm_year=%d\n",
+              R[NUM_PC], td->ten_year, td->year, tm.tm_year);
+#endif
 
     ssec = mktime(&tm);
     td->delta = (int32)(now.tv_sec - ssec);
@@ -838,6 +860,10 @@ uint32 tod_read(uint32 pa, size_t size)
     tod_resync();
 
     reg = pa - TODBASE;
+
+    sim_debug(READ_MSG, &tod_dev,
+              "[%08x] TOD: reg=%02x\n",
+              R[NUM_PC], reg);
 
     switch(reg) {
     case 0x04:        /* 1/10 Sec    */
@@ -859,13 +885,29 @@ uint32 tod_read(uint32 pa, size_t size)
     case 0x24:        /* 10 Day      */
         return td->ten_day;
     case 0x28:        /* Day of Week */
+#ifdef REV2
         return td->wday;
-    case 0x2c:        /* 1 Month     */
+#else
         return td->unit_mon;
-    case 0x30:        /* 10 Month    */
+#endif
+    case 0x2c:        /* 1 Month     */
+#ifdef REV2
+        return td->unit_mon;
+#else
         return td->ten_mon;
-    case 0x34:        /* Year        */
+#endif
+    case 0x30:        /* 10 Month    */
+#ifdef REV2
+        return td->ten_mon;
+#else
         return td->year;
+#endif
+    case 0x34:        /* Year        */
+#ifdef REV2
+        return td->year;
+#else
+        return td->ten_year;
+#endif
     default:
         break;
     }
@@ -880,7 +922,19 @@ void tod_write(uint32 pa, uint32 val, size_t size)
 
     reg = pa - TODBASE;
 
+    sim_debug(WRITE_MSG, &tod_dev,
+              "[%08x] TOD: reg=%02x val=%02x\n",
+              R[NUM_PC], reg, (uint8) val);
+
+
     switch(reg) {
+    case 0x00:        /* Test / Control */
+#ifdef REV3
+        if (val & 1) {
+            tod_update_delta();
+        }
+#endif
+        break;
     case 0x04:        /* 1/10 Sec    */
         td->tsec = (uint8) val;
         break;
@@ -908,22 +962,40 @@ void tod_write(uint32 pa, uint32 val, size_t size)
     case 0x24:        /* 10 Day      */
         td->ten_day = (uint8) val;
         break;
-    case 0x28:        /* Day of Week */
+    case 0x28:        /* Day of Week (Rev 2) / 1 Month (Rev 3) */
+#ifdef REV2
         td->wday = (uint8) val;
-        break;
-    case 0x2c:        /* 1 Month     */
+#else
         td->unit_mon = (uint8) val;
+#endif
         break;
-    case 0x30:        /* 10 Month    */
+    case 0x2c:        /* 1 Month (Rev 2) / 10 Month (Rev 3) */
+#ifdef REV2
+        td->unit_mon = (uint8) val;
+#else
         td->ten_mon = (uint8) val;
+#endif
         break;
-    case 0x34:        /* Year */
+    case 0x30:        /* 10 Month (Rev 2) / Year (Rev 3) */
+#ifdef REV2
+        td->ten_mon = (uint8) val;
+#else
         td->year = (uint8) val;
+#endif
         break;
-    case 0x38:
+    case 0x34:        /* Year (Rev 2) / 10 Year (Rev 3) */
+#ifdef REV2
+        td->year = (uint8) val;
+#else
+        td->ten_year = (uint8) val;
+#endif
+        break;
+    case 0x38:        /* Stop / Start */
         if (val & 1) {
             tod_update_delta();
         }
+        break;
+    case 0x3c:        /* Clock Setting / Interrupt */
         break;
     default:
         break;
@@ -955,3 +1027,54 @@ t_stat tod_help(FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cptr
 
     return SCPE_OK;
 }
+
+#if defined(REV3)
+
+/*
+ * Fault Register
+ *
+ * The Fault Register is composed of two 32-bit registers at addresses
+ * 0x4C000 and 0x4D000. These latch state of the last address to cause
+ * a CPU fault.
+ *
+ *   Bits 00-25: Physical memory address bits 00-25
+ */
+
+uint32 flt_1 = 0;
+uint32 flt_2 = 0;
+
+UNIT flt_unit = {
+    UDATA(NULL, UNIT_FIX+UNIT_BINK, 8)
+};
+
+REG flt_reg[] = {
+    { NULL }
+};
+
+DEVICE flt_dev = {
+    "FLT", &flt_unit, flt_reg, NULL,
+    1, 16, 8, 4, 16, 32,
+    NULL, NULL, NULL,
+    NULL, NULL, NULL,
+    NULL, DEV_DEBUG, 0, sys_deb_tab, NULL, NULL,
+    NULL, NULL, NULL,
+    NULL
+};
+
+uint32 flt_read(uint32 pa, size_t size)
+{
+    sim_debug(READ_MSG, &flt_dev,
+              "[%08x] Read from FLT Register at %x\n",
+              R[NUM_PC], pa);
+    return 0;
+}
+
+void flt_write(uint32 pa, uint32 val, size_t size)
+{
+    sim_debug(WRITE_MSG, &flt_dev,
+              "[%08x] Write to FLT Register at %x (val=%x)\n",
+              R[NUM_PC], pa, val);
+    return;
+}
+
+#endif

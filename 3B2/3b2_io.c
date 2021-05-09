@@ -33,20 +33,27 @@
 
 CIO_STATE  cio[CIO_SLOTS] = {{0}};
 
-struct iolink iotable[] = {
-    { MMUBASE,    MMUBASE+MMUSIZE,       &mmu_read,   &mmu_write   },
-    { IFBASE,     IFBASE+IFSIZE,         &if_read,    &if_write    },
-    { IDBASE,     IDBASE+IDSIZE,         &id_read,    &id_write    },
-    { TIMERBASE,  TIMERBASE+TIMERSIZE,   &timer_read, &timer_write },
-    { NVRAMBASE,  NVRAMBASE+NVRAMSIZE,   &nvram_read, &nvram_write },
-    { CSRBASE,    CSRBASE+CSRSIZE,       &csr_read,   &csr_write   },
-    { IUBASE,     IUBASE+IUSIZE,         &iu_read,    &iu_write    },
-    { DMAIDBASE,  DMAIDBASE+DMAIDSIZE,   &dmac_read,  &dmac_write  },
-    { DMAIUABASE, DMAIUABASE+DMAIUASIZE, &dmac_read,  &dmac_write  },
-    { DMAIUBBASE, DMAIUBBASE+DMAIUBSIZE, &dmac_read,  &dmac_write  },
-    { DMACBASE,   DMACBASE+DMACSIZE,     &dmac_read,  &dmac_write  },
-    { DMAIFBASE,  DMAIFBASE+DMAIFSIZE,   &dmac_read,  &dmac_write  },
-    { TODBASE,    TODBASE+TODSIZE,       &tod_read,   &tod_write   },
+iolink iotable[] = {
+    { MMUBASE,    MMUBASE+MMUSIZE,       &mmu_read,    &mmu_write    },
+    { IFBASE,     IFBASE+IFSIZE,         &if_read,     &if_write     },
+#if defined(REV2)
+    { IDBASE,     IDBASE+IDSIZE,         &id_read,     &id_write     },
+    { DMAIDBASE,  DMAIDBASE+DMAIDSIZE,   &dmac_read,   &dmac_write   },
+    { NVRBASE,    NVRBASE+NVRSIZE,       &nvram_read,  &nvram_write  },
+#elif defined(REV3)
+    { IFCSRBASE,  IFCSRBASE+IFCSRSIZE,   &if_csr_read, &if_csr_write },
+    { FLTLBASE,   FLTLSIZE,              &flt_read,    &flt_write    },
+    { FLTHBASE,   FLTHSIZE,              &flt_read,    &flt_write    },
+    { NVRBASE,    NVRBASE+NVRSIZE,       &nvram_read,  &nvram_write  },
+#endif
+    { TIMERBASE,  TIMERBASE+TIMERSIZE,   &timer_read,  &timer_write  },
+    { CSRBASE,    CSRBASE+CSRSIZE,       &csr_read,    &csr_write    },
+    { IUBASE,     IUBASE+IUSIZE,         &iu_read,     &iu_write     },
+    { DMAIUABASE, DMAIUABASE+DMAIUASIZE, &dmac_read,   &dmac_write   },
+    { DMAIUBBASE, DMAIUBBASE+DMAIUBSIZE, &dmac_read,   &dmac_write   },
+    { DMACBASE,   DMACBASE+DMACSIZE,     &dmac_read,   &dmac_write   },
+    { DMAIFBASE,  DMAIFBASE+DMAIFSIZE,   &dmac_read,   &dmac_write   },
+    { TODBASE,    TODBASE+TODSIZE,       &tod_read,    &tod_write    },
     { 0, 0, NULL, NULL}
 };
 
@@ -358,12 +365,71 @@ t_bool cio_rqueue_avail(uint8 cid, uint32 qnum, uint32 esize)
 
 uint32 io_read(uint32 pa, size_t size)
 {
-    struct iolink *p;
+    iolink *p;
     uint8 cid, reg, data;
 
-    /* Special devices */
-    if (pa == MEMSIZE_REG) {
+#if defined (REV3)
+    /*
+     * NOTE: Not Yet Implemented, but: If 0x4BF00 is accessed and does
+     * not result in an error, the system assumes there are two MMUs
+     * installed. I think 0x4b000 is where a second MMU would live in
+     * IO space if there were multiple MMUs.
+     */
+    if ((pa == MADDR_SLOT_0) ||
+        (pa == MADDR_SLOT_1) ||
+        (pa == MADDR_SLOT_2) ||
+        (pa == MADDR_SLOT_3)) {
+        switch(MEM_SIZE) {
+        case MSIZ_4M:
+            /* Configure with one 4MB boards */
+            if (pa < MADDR_SLOT_1) {
+                return MEMID_REV3_4M;
+            }
+            break;
+        case MSIZ_8M:
+            /* Configure with two 4MB boards */
+            if (pa < MADDR_SLOT_2) {
+                return MEMID_REV3_4M;
+            }
+            break;
+        case MSIZ_16M:
+            /* Configure with four 4MB boards */
+            return MEMID_REV3_4M;
+        case MSIZ_32M:
+            /* Configure with two 16MB boards */
+            if (pa < MADDR_SLOT_2) {
+                return MEMID_REV3_16M;
+            }
+            break;
+        case MSIZ_64M:
+            /* Configure with four 16MB boards */
+            return MEMID_REV3_16M;
+        default:
+            return 0;
+        }
 
+        return 0;
+    }
+
+    if (pa >= VCACHE_BOTTOM && pa < VCACHE_TOP) {
+        CSRBIT(CSRTIMO, TRUE);
+        cpu_abort(NORMAL_EXCEPTION, EXTERNAL_MEMORY_FAULT);
+        return 0;
+    }
+
+    if (pa >= BUB_BOTTOM && pa < BUB_TOP) {
+        CSRBIT(CSRTIMO, TRUE);
+
+        /* TODO: I don't remember why we do this! */
+        if ((pa & 0xfff) == 3) {
+            cpu_abort(NORMAL_EXCEPTION, EXTERNAL_MEMORY_FAULT);
+        }
+
+        /* TODO: Implement BUB */
+        return 1;
+    }
+#else
+    if (pa == MEMSIZE_REG) {
         /* The following values map to memory sizes:
            0x00: 512KB (  524,288 B)
            0x01: 2MB   (2,097,152 B)
@@ -371,18 +437,19 @@ uint32 io_read(uint32 pa, size_t size)
            0x03: 4MB   (4,194,304 B)
         */
         switch(MEM_SIZE) {
-        case 0x80000:  /* 512KB */
-            return 0;
-        case 0x100000: /* 1MB */
-            return 2;
-        case 0x200000: /* 2MB */
-            return 1;
-        case 0x400000: /* 4MB */
-            return 3;
+        case MSIZ_512K:  /* 512KB */
+            return MEMID_REV2_512K;
+        case MSIZ_1M: /* 1MB */
+            return MEMID_REV2_1M;
+        case MSIZ_2M: /* 2MB */
+            return MEMID_REV2_2M;
+        case MSIZ_4M: /* 4MB */
+            return MEMID_REV2_4M;
         default:
             return 0;
         }
     }
+#endif
 
     /* CIO board area */
     if (pa >= CIO_BOTTOM && pa < CIO_TOP) {
@@ -394,7 +461,8 @@ uint32 io_read(uint32 pa, size_t size)
             sim_debug(IO_DBG, &cpu_dev,
                       "[READ] [%08x] No card at cid=%d reg=%d\n",
                       R[NUM_PC], cid, reg);
-            csr_data |= CSRTIMO;
+
+            CSRBIT(CSRTIMO, TRUE);
             cpu_abort(NORMAL_EXCEPTION, EXTERNAL_MEMORY_FAULT);
             return 0;
         }
@@ -498,7 +566,7 @@ uint32 io_read(uint32 pa, size_t size)
             sim_debug(CIO_DBG, &cpu_dev,
                       "[READ] [%08x] No card at cid=%d reg=%d\n",
                       R[NUM_PC], cid, reg);
-            csr_data |= CSRTIMO;
+            CSRBIT(CSRTIMO, TRUE);
             cpu_abort(NORMAL_EXCEPTION, EXTERNAL_MEMORY_FAULT);
             return 0;
         }
@@ -515,15 +583,33 @@ uint32 io_read(uint32 pa, size_t size)
     sim_debug(IO_DBG, &cpu_dev,
               "[%08x] [io_read] ADDR=%08x: No device found.\n",
               R[NUM_PC], pa);
-    csr_data |= CSRTIMO;
+    CSRBIT(CSRTIMO, TRUE);
     cpu_abort(NORMAL_EXCEPTION, EXTERNAL_MEMORY_FAULT);
     return 0;
 }
 
 void io_write(uint32 pa, uint32 val, size_t size)
 {
-    struct iolink *p;
+    iolink *p;
     uint8 cid, reg;
+
+#if defined(REV3)
+    if (pa >= VCACHE_BOTTOM && pa < VCACHE_TOP) {
+        CSRBIT(CSRTIMO, TRUE);
+        cpu_abort(NORMAL_EXCEPTION, EXTERNAL_MEMORY_FAULT);
+        return;
+    }
+
+    if (pa >= BUB_BOTTOM && pa < BUB_TOP) {
+        CSRBIT(CSRTIMO, TRUE);
+        /* TODO: I don't remember why we do this! */
+        if ((pa & 0xfff) == 3) {
+            cpu_abort(NORMAL_EXCEPTION, EXTERNAL_MEMORY_FAULT);
+        }
+        /* TODO: Implement BUB */
+        return;
+    }
+#endif
 
     /* Feature Card Area */
     if (pa >= CIO_BOTTOM && pa < CIO_TOP) {
@@ -535,7 +621,7 @@ void io_write(uint32 pa, uint32 val, size_t size)
             sim_debug(CIO_DBG, &cpu_dev,
                       "[WRITE] [%08x] No card at cid=%d reg=%d\n",
                       R[NUM_PC], cid, reg);
-            csr_data |= CSRTIMO;
+            CSRBIT(CSRTIMO, TRUE);
             cpu_abort(NORMAL_EXCEPTION, EXTERNAL_MEMORY_FAULT);
             return;
         }
@@ -630,7 +716,7 @@ void io_write(uint32 pa, uint32 val, size_t size)
             sim_debug(CIO_DBG, &cpu_dev,
                       "[WRITE] [%08x] No card at cid=%d reg=%d\n",
                       R[NUM_PC], cid, reg);
-            csr_data |= CSRTIMO;
+            CSRBIT(CSRTIMO, TRUE);
             cpu_abort(NORMAL_EXCEPTION, EXTERNAL_MEMORY_FAULT);
             return;
         }
@@ -648,7 +734,7 @@ void io_write(uint32 pa, uint32 val, size_t size)
     sim_debug(IO_DBG, &cpu_dev,
               "[%08x] [io_write] ADDR=%08x: No device found.\n",
               R[NUM_PC], pa);
-    csr_data |= CSRTIMO;
+    CSRBIT(CSRTIMO, TRUE);
     cpu_abort(NORMAL_EXCEPTION, EXTERNAL_MEMORY_FAULT);
 }
 

@@ -1,4 +1,4 @@
-/* 3b2_400_mau.c: AT&T 3B2 Model 400 Math Acceleration Unit (WE32106 MAU)
+/* 3b2_mau.c: AT&T 3B2 Model Math Acceleration Unit (WE32106 MAU)
    Implementation
 
    Copyright (c) 2019, Seth J. Morabito
@@ -84,7 +84,7 @@
 #include <math.h>
 
 #include "3b2_defs.h"
-#include "3b2_400_mau.h"
+#include "3b2_mau.h"
 
 #define   MAU_ID   0        /* Coprocessor ID of MAU */
 
@@ -242,9 +242,9 @@ REG mau_reg[] = {
 };
 
 MTAB mau_mod[] = {
-    { UNIT_EXHALT, UNIT_EXHALT, "Halt on Exception", "EXHALT",
+    { UNIT_EXBRK, UNIT_EXBRK, "Halt on Exception", "EXBRK",
       NULL, NULL, NULL, "Enables Halt on floating point exceptions" },
-    { UNIT_EXHALT, 0, "No halt on Exception", "NOEXHALT",
+    { UNIT_EXBRK, 0, "No halt on Exception", "NOEXBRK",
       NULL, NULL, NULL, "Disables Halt on floating point exceptions" },
     { 0 }
 };
@@ -273,7 +273,11 @@ DEVICE mau_dev = {
     NULL,                           /* attach routine */
     NULL,                           /* detach routine */
     NULL,                           /* context */
-    DEV_DISABLE|DEV_DIS|DEV_DEBUG,  /* flags */
+#ifdef REV2
+    DEV_DISABLE|DEV_DIS|DEV_DEBUG,  /* Rev2 flags */
+#else
+    DEV_DEBUG,                      /* Rev3 flags: Always required */
+#endif
     0,                              /* debug control flags */
     mau_debug,                      /* debug flag names */
     NULL,                           /* memory size change */
@@ -416,7 +420,7 @@ static SIM_INLINE void abort_on_fault()
          * in the CPU's PSW).
          */
         if ((mau_state.asr & MAU_ASR_IO) && (R[NUM_PSW] & PSW_OE_MASK)) {
-            if (mau_unit.flags & UNIT_EXHALT) {
+            if (mau_unit.flags & UNIT_EXBRK) {
                 stop_reason = STOP_EX;
             }
             sim_debug(TRACE_DBG, &mau_dev,
@@ -427,7 +431,7 @@ static SIM_INLINE void abort_on_fault()
 
         /* Otherwise, check for other exceptions. */
         if (mau_exception_present()) {
-            if (mau_unit.flags & UNIT_EXHALT) {
+            if (mau_unit.flags & UNIT_EXBRK) {
                 stop_reason = STOP_EX;
             }
             sim_debug(TRACE_DBG, &mau_dev,

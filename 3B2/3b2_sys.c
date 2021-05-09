@@ -1,6 +1,6 @@
-/* 3b2_defs.h: AT&T 3B2 Model 400 system-specific logic implementation
+/* 3b2_sys.c: AT&T 3B2 common system definition
 
-   Copyright (c) 2017, Seth J. Morabito
+   Copyright (c) 2020, Seth J. Morabito
 
    Permission is hereby granted, free of charge, to any person
    obtaining a copy of this software and associated documentation
@@ -29,36 +29,12 @@
 */
 
 #include "3b2_defs.h"
-#include "3b2_400_sys.h"
 
-char sim_name[] = "AT&T 3B2 Model 400";
-
-REG *sim_PC = &cpu_reg[0];
+REG *sim_PC = &cpu_reg[NUM_PC];
 
 /* All opcodes are 1 or 2 bytes. Operands may be up to 6 bytes, and
    there may be up to 3 operands, for a maximum of 20 bytes */
 int32 sim_emax = 20;
-
-DEVICE *sim_devices[] = {
-    &cpu_dev,
-    &mmu_dev,
-    &mau_dev,
-    &timer_dev,
-    &tod_dev,
-    &nvram_dev,
-    &csr_dev,
-    &tti_dev,
-    &tto_dev,
-    &contty_dev,
-    &iu_timer_dev,
-    &dmac_dev,
-    &if_dev,
-    &id_dev,
-    &ports_dev,
-    &ctc_dev,
-    &ni_dev,
-    NULL
-};
 
 const char *sim_stop_messages[SCPE_BASE] = {
     "Unknown error",
@@ -73,22 +49,6 @@ const char *sim_stop_messages[SCPE_BASE] = {
     "Infinite Loop",
     "Simulator Error"
 };
-
-void full_reset()
-{
-    cpu_reset(&cpu_dev);
-    mau_reset(&mau_dev);
-    tti_reset(&tti_dev);
-    contty_reset(&contty_dev);
-    iu_timer_reset(&iu_timer_dev);
-    timer_reset(&timer_dev);
-    if_reset(&if_dev);
-    id_reset(&id_dev);
-    csr_reset(&csr_dev);
-    ports_reset(&ports_dev);
-    ctc_reset(&ctc_dev);
-    ni_reset(&ni_dev);
-}
 
 t_stat sim_load(FILE *fileref, CONST char *cptr, CONST char *fnam, int flag)
 {

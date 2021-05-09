@@ -40,7 +40,7 @@
 #define DMA_IF_READ      (IFBASE + IF_DATA_REG)
 
 typedef struct {
-    uint8  page;
+    uint16 page;
     uint16 addr;     /* Original addr       */
     uint16 wcount;   /* Original wcount     */
     uint16 addr_c;   /* Current addr        */

@@ -63,6 +63,7 @@ UNIT if_unit = {
 };
 
 REG if_reg[] = {
+    { HRDATAD (IRQ, if_irq, 1, "IRQ Set") },
     { NULL }
 };
 
@@ -86,13 +87,17 @@ t_bool   if_irq = FALSE;
 static SIM_INLINE void if_set_irq()
 {
     if_irq = TRUE;
-    csr_data |= CSRDISK;
+#if defined (REV2)
+    CSRBIT(CSRDISK, TRUE);
+#endif
 }
 
 static SIM_INLINE void if_clear_irq()
 {
     if_irq = FALSE;
-    csr_data &= ~CSRDISK;
+#if defined (REV2)
+    CSRBIT(CSRDISK, FALSE);
+#endif
 }
 
 static SIM_INLINE void if_activate(uint32 delay)
@@ -289,20 +294,24 @@ void if_handle_command()
     case IF_WRITE_SEC:
     case IF_WRITE_SEC_M:
         if_state.cmd_type = 2;
+#if defined(REV2)
         if (((if_state.cmd & IF_U_FLAG) >> 1) != if_state.side) {
             head_switch_delay = IF_HSW_DELAY;
             if_state.side = (if_state.cmd & IF_U_FLAG) >> 1;
         }
+#endif
         break;
 
     case IF_READ_ADDR:
     case IF_READ_TRACK:
     case IF_WRITE_TRACK:
         if_state.cmd_type = 3;
+#if defined(REV2)
         if (((if_state.cmd & IF_U_FLAG) >> 1) != if_state.side) {
             head_switch_delay = IF_HSW_DELAY;
             if_state.side = (if_state.cmd & IF_U_FLAG) >> 1;
         }
+#endif
         break;
 
     case IF_FORCE_INT:
@@ -517,7 +526,6 @@ void if_handle_command()
 
         if ((if_state.cmd & 0xf) == 0) {
             if_cancel_pending_irq();
-            if_clear_irq(); /* TODO: Confirm this is right */
         } else if ((if_state.cmd & 0x8) == 0x8) {
             if_state.status |= IF_DRQ;
             if_set_irq();
@@ -581,6 +589,16 @@ void if_write(uint32 pa, uint32 val, size_t size)
     default:
         break;
     }
+}
+
+uint32 if_csr_read(uint32 pa, size_t size)
+{
+    return (uint32)(if_state.csr);
+}
+
+void if_csr_write(uint32 pa, uint32 val, size_t size)
+{
+    if_state.csr = val & 0xff;
 }
 
 CONST char *if_description(DEVICE *dptr)

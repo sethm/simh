@@ -32,17 +32,19 @@
 #define __3B2_IF_H__
 
 #include "sim_defs.h"
+#include "sim_disk.h"
 
 typedef struct {
-    uint8 data;
-    uint8 cmd;
-    uint8 cmd_type;
-    uint8 status;
-    uint8 track;
-    uint8 sector;
-    uint8 side;
-    uint8 read_addr_ptr;
-    int8  step_dir;
+    uint8  data;
+    uint8  cmd;
+    uint8  cmd_type;
+    uint8  status;
+    uint8  track;
+    uint8  sector;
+    uint8  side;
+    uint8  read_addr_ptr;
+    uint8  csr;           /* 3B2 Rev3 only */
+    int8   step_dir;
     t_bool drq;
 } IF_STATE;
 
@@ -114,6 +116,8 @@ t_stat if_attach(UNIT *uptr, CONST char *cptr);
 t_stat if_detach(UNIT *uptr);
 uint32 if_read(uint32 pa, size_t size);
 void if_write(uint32 pa, uint32 val, size_t size);
+uint32 if_csr_read(uint32 pa, size_t size);               /* 3B2 Rev3 only */
+void if_csr_write(uint32 pa, uint32 val, size_t size);    /* 3B2 Rev3 only */
 void if_handle_command();
 void if_after_dma();
 CONST char *if_description(DEVICE *dptr);

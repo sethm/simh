@@ -155,7 +155,38 @@
 
 #define DMA_ID_SVC     IDBASE+ID_DATA_REG
 
-#define CMD_NUM       ((id_cmd >> 4) & 0xf)
+#define CMD_NUM       ((id_state.cmd >> 4) & 0xf)
+
+typedef struct {
+    uint8  dpr;               /* Data FIFO pointer - Read */
+    uint8  dpw;               /* Data FIFO pointer - Write */
+    uint8  status;            /* Controller Status Register */
+    uint8  int_status;        /* Unit Interrupt Status */
+    uint8  cmd;               /* Last command received */
+    t_bool drq;               /* DMAC request */
+    uint8  data[ID_FIFO_LEN]; /* 8-byte FIFO */
+    t_bool srqm;              /* SRQM bit */
+    uint8  unit_num;          /* The logical unit number (0-1) */
+    uint8  ua;                /* The physical unit number (0-3) */
+    uint16 cyl[ID_NUM_UNITS]; /* Cylinder the drive is positioned on */
+    uint8  etn;               /* Ending Track Number (from Specify) */
+    uint8  esn;               /* Ending Sector Number (from Specify) */
+    uint8  dtlh;              /* DTLH word (from Specify) */
+    uint8  psn;               /* Physical sector number */
+    uint8  phn;               /* Physical head number */
+    uint8  lcnh;              /* Logical cylinder number, high byte */
+    uint8  lcnl;              /* Logical cylinder number, low byte */
+    uint8  lhn;               /* Logical head number */
+    uint8  lsn;               /* Logical sector number */
+    uint8  scnt;              /* Number of sectors to transfer,
+                                 decremented after each sector */
+    t_bool polling;           /* Whether we are using polling mode or not */
+    uint8  buf[ID_SEC_SIZE];  /* Sector buffer */
+    size_t buf_ptr;           /* Buffer pointer */
+    uint8  idfield[ID_IDFIELD_LEN];
+    uint8  idfield_ptr;
+    int8   seek_state[ID_NUM_UNITS];
+} ID_STATE;
 
 /* Function prototypes */
 

@@ -1,4 +1,4 @@
-/* 3b2_400_defs.h: AT&T 3B2 Model 400 Simulator Definitions
+/* 3b2_rev2_defs.h: AT&T 3B2 Model 400 Simulator Definitions
 
    Copyright (c) 2017, Seth J. Morabito
 
@@ -33,14 +33,19 @@
 
 #include "sim_defs.h"
 
-#define MAXMEMSIZE      (1 << 22) /* 4 MB */
+#define NUM_REG         16
 
+#define DEFMEMSIZE      MSIZ_2M
+#define MAXMEMSIZE      MSIZ_4M
+
+#define MMUBASE         0x40000
+#define MMUSIZE         0x1000
 #define TODBASE         0x41000
 #define TODSIZE         0x40
 #define TIMERBASE       0x42000
 #define TIMERSIZE       0x20
-#define NVRAMBASE       0x43000
-#define NVRAMSIZE       0x1000
+#define NVRBASE         0x43000
+#define NVRSIZE         0x1000
 #define CSRBASE         0x44000
 #define CSRSIZE         0x100
 #define IFBASE          0x4d000
@@ -58,22 +63,22 @@
 #define ID_CMD_STAT_REG 1
 
 /* CSR Flags */
-#define CSRTIMO         0x8000 /* Bus Timeout Error      */
-#define CSRPARE         0x4000 /* Memory Parity Error    */
-#define CSRRRST         0x2000 /* System Reset Request   */
-#define CSRALGN         0x1000 /* Memory Alignment Fault */
-#define CSRLED          0x0800 /* Failure LED            */
-#define CSRFLOP         0x0400 /* Floppy Motor On        */
-#define CSRRES          0x0200 /* Reserved               */
-#define CSRITIM         0x0100 /* Inhibit Timers         */
-#define CSRIFLT         0x0080 /* Inhibit Faults         */
-#define CSRCLK          0x0040 /* Clock Interrupt        */
-#define CSRPIR8         0x0020 /* Programmed Interrupt 8 */
-#define CSRPIR9         0x0010 /* Programmed Interrupt 9 */
-#define CSRUART         0x0008 /* UART Interrupt         */
-#define CSRDISK         0x0004 /* Floppy Interrupt       */
-#define CSRDMA          0x0002 /* DMA Interrupt          */
-#define CSRIOF          0x0001 /* I/O Board Fail         */
+#define CSRIOF          1u         /* I/O Board Fail         */
+#define CSRDMA          (1u << 1)  /* DMA Interrupt          */
+#define CSRDISK         (1u << 2)  /* Floppy Interrupt       */
+#define CSRUART         (1u << 3)  /* UART Interrupt         */
+#define CSRPIR9         (1u << 4)  /* Programmed Interrupt 9 */
+#define CSRPIR8         (1u << 5)  /* Programmed Interrupt 8 */
+#define CSRCLK          (1u << 6)  /* Clock Interrupt        */
+#define CSRIFLT         (1u << 7)  /* Inhibit Faults         */
+#define CSRITIM         (1u << 8)  /* Inhibit Timers         */
+#define CSRRES          (1u << 9)  /* Reserved               */
+#define CSRFLOP         (1u << 10) /* Floppy Motor On        */
+#define CSRLED          (1u << 11) /* Failure LED            */
+#define CSRALGN         (1u << 12) /* Memory Alignment Fault */
+#define CSRRRST         (1u << 13) /* System Reset Request   */
+#define CSRPARE         (1u << 14) /* Memory Parity Error    */
+#define CSRTIMO         (1u << 15) /* Bus Timeout Error      */
 
 #define MEMSIZE_REG     0x4C003
 
@@ -105,7 +110,9 @@
 #define DMA_ID          0x45
 #define DMA_IUA         0x46
 #define DMA_IUB         0x47
-#define DMA_C           0x48
 #define DMA_IF          0x4E
+#define DMA_C           0x48
+
+extern uint16    csr_data;
 
 #endif /* _3B2_400_DEFS_H_  */

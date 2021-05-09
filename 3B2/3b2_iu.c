@@ -298,9 +298,9 @@ void iu_txrdy_a_irq() {
         (iu_console.conf & TX_EN) &&
         (iu_console.stat & STS_TXR)) {
         sim_debug(EXECUTE_MSG, &tto_dev,
-                  "[iu_txrdy_a_irq()] Firing IRQ after transmit of %02x (%c)\n",
-                  (uint8) iu_console.txbuf, (char) iu_console.txbuf);
-        csr_data |= CSRUART;
+                  "[iu_txrdy_a_irq()] Firing IRQ after transmit of %02x\n",
+                  (uint8) iu_console.txbuf);
+        CSRBIT(CSRUART, TRUE);
     }
 }
 
@@ -309,9 +309,9 @@ void iu_txrdy_b_irq() {
         (iu_contty.conf & TX_EN) &&
         (iu_contty.stat & STS_TXR)) {
         sim_debug(EXECUTE_MSG, &contty_dev,
-                  "[iu_txrdy_b_irq()] Firing IRQ after transmit of %02x (%c)\n",
-                  (uint8) iu_contty.txbuf, (char) iu_contty.txbuf);
-        csr_data |= CSRUART;
+                  "[iu_txrdy_b_irq()] Firing IRQ after transmit of %02x\n",
+                  (uint8) iu_contty.txbuf);
+        CSRBIT(CSRUART, TRUE);
     }
 }
 
@@ -412,7 +412,7 @@ t_stat iu_svc_tti(UNIT *uptr)
         iu_console.stat |= STS_RXR;
         iu_state.istat |= ISTS_RAI;
         if (iu_state.imr & IMR_RXRA) {
-            csr_data |= CSRUART;
+            CSRBIT(CSRUART, TRUE);
         }
     }
 
@@ -448,7 +448,7 @@ t_stat iu_svc_contty_rcv(UNIT *uptr)
         contty_ldsc[ln].rcve = 1;
         iu_state.inprt &= ~(IU_DCDB);
         iu_state.ipcr |= IU_DCDB;
-        csr_data |= CSRUART;
+        CSRBIT(CSRUART, TRUE);
     }
 
     /* Check for disconnect */
@@ -456,7 +456,7 @@ t_stat iu_svc_contty_rcv(UNIT *uptr)
         contty_ldsc[0].rcve = 0;
         iu_state.inprt |= IU_DCDB;
         iu_state.ipcr |= IU_DCDB;
-        csr_data |= CSRUART;
+        CSRBIT(CSRUART, TRUE);
     } else if (iu_contty.conf & RX_EN) {
         tmxr_poll_rx(&contty_desc);
 
@@ -473,7 +473,7 @@ t_stat iu_svc_contty_rcv(UNIT *uptr)
                 iu_contty.stat |= STS_RXR;
                 iu_state.istat |= ISTS_RBI;
                 if (iu_state.imr & IMR_RXRB) {
-                    csr_data |= CSRUART;
+                    CSRBIT(CSRUART, TRUE);
                 }
             }
         }
@@ -508,7 +508,7 @@ t_stat iu_svc_timer(UNIT *uptr)
     iu_state.istat |= ISTS_CRI;
 
     if (iu_state.imr & IMR_CTR) {
-        csr_data |= CSRUART;
+        CSRBIT(CSRUART, TRUE);
     }
 
     return SCPE_OK;
@@ -562,7 +562,7 @@ uint32 iu_read(uint32 pa, size_t size)
                 iu_console.stat &= ~(STS_RXR|STS_FFL);
                 iu_state.istat &= ~ISTS_RAI;
             } else if (iu_state.imr & IMR_RXRA) {
-                csr_data |= CSRUART;
+                CSRBIT(CSRUART, TRUE);
             }
         }
         break;
@@ -570,7 +570,7 @@ uint32 iu_read(uint32 pa, size_t size)
         data = iu_state.ipcr;
         /* Reading the port resets it */
         iu_state.ipcr = 0;
-        csr_data &= ~CSRUART;
+        CSRBIT(CSRUART, FALSE);
         break;
     case ISR:
         data = iu_state.istat;
@@ -599,7 +599,7 @@ uint32 iu_read(uint32 pa, size_t size)
                 iu_contty.stat &= ~(STS_RXR|STS_FFL);
                 iu_state.istat &= ~ISTS_RBI;
             } else if (iu_state.imr & IMR_RXRB) {
-                csr_data |= CSRUART;
+                CSRBIT(CSRUART, TRUE);
             }
         }
         break;
@@ -614,12 +614,12 @@ uint32 iu_read(uint32 pa, size_t size)
     case STOP_CTR:
         data = 0;
         iu_state.istat &= ~ISTS_CRI;
-        csr_data &= ~CSRUART;
+        CSRBIT(CSRUART, FALSE);
         sim_cancel(&iu_timer_unit);
         break;
     case 17: /* Clear DMAC interrupt */
         data = 0;
-        csr_data &= ~CSRDMA;
+        CSRBIT(CSRDMA, FALSE);
         break;
     default:
         break;
@@ -670,7 +670,10 @@ void iu_write(uint32 pa, uint32 val, size_t size)
         break;
     case IMR:
         iu_state.imr = bval;
-        csr_data &= ~CSRUART;
+        sim_debug(EXECUTE_MSG, &tto_dev,
+                  "[%08x] Write IMR = %x\n",
+                  R[NUM_PC], bval);
+        CSRBIT(CSRUART, FALSE);
         /* Possibly cause an interrupt */
         iu_txrdy_a_irq();
         iu_txrdy_b_irq();
@@ -773,7 +776,7 @@ t_stat iu_tx(uint8 portno, uint8 val)
             p->stat |= STS_RXR;
             if (iu_state.imr & imr_mask) {
                 iu_state.istat |= ists;
-                csr_data |= CSRUART;
+                CSRBIT(CSRUART, TRUE);
             }
 
             return SCPE_OK;
@@ -789,12 +792,12 @@ t_stat iu_tx(uint8 portno, uint8 val)
                     /* Write the character to the SIMH console */
                     sim_debug(EXECUTE_MSG, &tto_dev,
                               "[iu_tx] CONSOLE transmit %02x (%c)\n",
-                              (uint8) c, (char) c);
+                              (uint8) c, (char) c >= 0x20 ? c : '.');
                     status = sim_putchar_s(c);
                 } else {
                     sim_debug(EXECUTE_MSG, &contty_dev,
                               "[iu_tx] CONTTY transmit %02x (%c)\n",
-                              (uint8) c, (char) c);
+                              (uint8) c, (char) c >= 0x20 ? c : '.');
                     status = tmxr_putc_ln(&contty_ldsc[0], c);
                 }
             }
@@ -944,12 +947,15 @@ void iu_dma_console(uint8 channel, uint32 service_address)
         }
     }
 
+    /* Cancel any pending interrupts, we're done. */
+    sim_cancel(uptr);
+
     /* Done with DMA */
     port->dma = DMA_NONE;
 
     dma_state.mask |= (1 << channel);
     dma_state.status |= (1 << channel);
-    csr_data |= CSRDMA;
+    CSRBIT(CSRDMA, TRUE);
 }
 
 void iu_dma_contty(uint8 channel, uint32 service_address)
@@ -994,5 +1000,5 @@ void iu_dma_contty(uint8 channel, uint32 service_address)
 
     dma_state.mask |= (1 << channel);
     dma_state.status |= (1 << channel);
-    csr_data |= CSRDMA;
+    CSRBIT(CSRDMA, TRUE);
 }

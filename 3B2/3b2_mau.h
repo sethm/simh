@@ -1,4 +1,4 @@
-/* 3b2_400_mau.c: AT&T 3B2 Model 400 Math Acceleration Unit (WE32106 MAU)
+/* 3b2_mau.h: AT&T 3B2 Math Acceleration Unit (WE32106 MAU)
    Header
 
    Copyright (c) 2019, Seth J. Morabito
@@ -191,7 +191,7 @@
 #define XFP_SIGN(V)  (((V)->sign_exp >> 15) & 1)
 #define XFP_EXP(V)   ((V)->sign_exp & 0x7fff)
 #define XFP_FRAC(V)  ((V)->frac)
-    
+
 #define XFP_IS_NORMAL(V)          ((V)->frac & 0x8000000000000000ull)
 
 #define DEFAULT_XFP_NAN_SIGN_EXP  0xffff
