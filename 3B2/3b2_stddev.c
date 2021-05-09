@@ -37,7 +37,6 @@
    - tod         MM58174A / MM58374A Real-Time-Clock
 */
 
-#include <3b2_rev3_defs.h>
 #include <time.h>
 
 #include "3b2_defs.h"
@@ -346,6 +345,7 @@ static void timer_activate(uint8 ctrnum)
 
     switch (ctrnum) {
     case TIMER_SANITY:
+#ifdef REV3
         if ((csr_data & CSRISTIM) == 0) {
             sim_debug(EXECUTE_MSG, &timer_dev,
                       "[%08x] SANITY TIMER: Activating after %d steps\n",
@@ -357,6 +357,7 @@ static void timer_activate(uint8 ctrnum)
                       "[%08x] SANITY TIMER: Currently disabled, not starting\n",
                       R[NUM_PC]);
         }
+#endif
         break;
     case TIMER_INTERVAL:
         if ((csr_data & CSRITIM) == 0) {
@@ -372,6 +373,7 @@ static void timer_activate(uint8 ctrnum)
         }
         break;
     case TIMER_BUS:
+#ifdef REV3
         if ((csr_data & CSRITIMO) == 0) {
             sim_debug(EXECUTE_MSG, &timer_dev,
                       "[%08x] BUS TIMER: Activating after %d steps\n",
@@ -383,6 +385,7 @@ static void timer_activate(uint8 ctrnum)
                       "[%08x] BUS TIMER: Currently disabled, not starting\n",
                       R[NUM_PC]);
         }
+#endif
         break;
     default:
         break;

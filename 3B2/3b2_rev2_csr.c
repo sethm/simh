@@ -150,7 +150,8 @@ void csr_write(uint32 pa, uint32 val, size_t size)
          * make diagnostics pass. This is not 100% accurate, but it
          * makes SVR3 and DGMON tests happy.
          */
-        timer_tick();
+        /* TODO: Re-implement timer_tick() */
+        // timer_tick();
 
         csr_data &= ~CSRITIM;
         break;
