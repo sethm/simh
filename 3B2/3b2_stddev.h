@@ -123,6 +123,7 @@ extern int32 tmxr_poll;
 
 #define FLT_MSK         0xffffff00
 #define MEM_EQP         0x4
+#define MEM_2M          0x0
 #define MEM_4M          0x2
 #define MEM_16M         0x3
 

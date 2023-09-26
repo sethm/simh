@@ -53,15 +53,19 @@ REG mmu_reg[] = {
     { NULL }
 };
 
-#define MMU_EXEC_DBG    1
-#define MMU_TRACE_DBG   1 << 1
-#define MMU_CACHE_DBG   1 << 2
-#define MMU_FAULT_DBG   1 << 3
-#define MMU_READ_DBG    1 << 4
-#define MMU_WRITE_DBG   1 << 5
+#define MMU_EXEC_DBG    (1u)
+#define MMU_PDC_DBG     (1u << 1)
+#define MMU_SDC_DBG     (1u << 2)
+#define MMU_TRACE_DBG   (1u << 3)
+#define MMU_CACHE_DBG   (1u << 4)
+#define MMU_FAULT_DBG   (1u << 5)
+#define MMU_READ_DBG    (1u << 6)
+#define MMU_WRITE_DBG   (1u << 7)
 
 static DEBTAB mmu_debug[] = {
     { "EXEC",  MMU_EXEC_DBG,   "Simple execution" },
+    { "PDC",   MMU_PDC_DBG,    "PDC write" },
+    { "SDC",   MMU_SDC_DBG,    "SDC write" },
     { "CACHE", MMU_CACHE_DBG,  "Cache trace" },
     { "TRACE", MMU_TRACE_DBG,  "Translation trace" },
     { "FAULT", MMU_FAULT_DBG,  "Faults" },
@@ -187,7 +191,7 @@ static void put_sdce(uint32 va, uint32 sd_hi, uint32 sd_lo)
     mmu_state.sdch[ci] = SD_TO_SDCH(sd_hi, sd_lo);
     mmu_state.sdcl[ci] = SD_TO_SDCL(sd_lo, va);
 
-    sim_debug(MMU_CACHE_DBG, &mmu_dev,
+    sim_debug(MMU_SDC_DBG, &mmu_dev,
               "CACHED SD AT IDX %d. va=%08x sd_hi=%08x sd_lo=%08x sdc_hi=%08x sdc_lo=%08x\n",
               ci, va, sd_hi, sd_lo, mmu_state.sdch[ci], mmu_state.sdcl[ci]);
 
@@ -258,7 +262,7 @@ static void put_pdce_at(uint32 va, uint32 sd_lo, uint32 pd, uint32 slot)
 {
     mmu_state.pdcl[slot] = PD_TO_PDCL(pd, sd_lo);
     mmu_state.pdch[slot] = VA_TO_PDCH(va, sd_lo);
-    sim_debug(MMU_CACHE_DBG, &mmu_dev,
+    sim_debug(MMU_PDC_DBG, &mmu_dev,
               "Caching MMU PDC entry at index %d (pdc_hi=%08x pdc_lo=%08x va=%08x)\n",
               slot, mmu_state.pdch[slot], mmu_state.pdcl[slot], va);
     set_u_bit(slot);

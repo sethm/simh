@@ -196,6 +196,8 @@ uint32 nvram_read(uint32 pa, size_t size)
         break;
     }
 
+    sim_debug(READ_MSG, &nvram_dev, "addr=%08x, val=0x%x\n", pa, data);
+
     return data;
 }
 
@@ -204,6 +206,8 @@ void nvram_write(uint32 pa, uint32 val, size_t size)
     uint32 offset = pa - NVRBASE;
     uint32 index = offset >> 2;
     uint32 sc, mask;
+
+    sim_debug(WRITE_MSG, &nvram_dev, "addr=%08x, val=0x%x\n", pa, val);
 
     switch(size) {
     case 8:
