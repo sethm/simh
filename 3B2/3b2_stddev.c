@@ -78,7 +78,7 @@ t_stat nvram_ex(t_value *vptr, t_addr exta, UNIT *uptr, int32 sw)
 {
     uint32 addr = (uint32) exta;
 
-    if ((vptr == NULL) || (addr & 03)) {
+    if ((vptr == NULL) || (addr & 3)) {
         return SCPE_ARG;
     }
 
@@ -95,7 +95,7 @@ t_stat nvram_dep(t_value val, t_addr exta, UNIT *uptr, int32 sw)
 {
     uint32 addr = (uint32) exta;
 
-    if (addr & 03) {
+    if (addr & 3) {
         return SCPE_ARG;
     }
 
@@ -196,7 +196,7 @@ uint32 nvram_read(uint32 pa, size_t size)
         break;
     }
 
-    sim_debug(READ_MSG, &nvram_dev, "addr=%08x, val=0x%x\n", pa, data);
+    sim_debug(READ_MSG, &nvram_dev, "size=%lu, addr=%08x, val=0x%x\n", size, pa, data);
 
     return data;
 }
@@ -207,7 +207,7 @@ void nvram_write(uint32 pa, uint32 val, size_t size)
     uint32 index = offset >> 2;
     uint32 sc, mask;
 
-    sim_debug(WRITE_MSG, &nvram_dev, "addr=%08x, val=0x%x\n", pa, val);
+    sim_debug(WRITE_MSG, &nvram_dev, "size=%lu, addr=%08x, val=0x%x\n", size, pa, val);
 
     switch(size) {
     case 8:
@@ -768,27 +768,36 @@ static uint32 mem_size(uint8 slot) {
 
 uint32 flt_read(uint32 pa, size_t size)
 {
-    sim_debug(EXECUTE_MSG, &flt_dev,
-              "Read from FLT Register at %x\n",
-              pa);
+    uint32 val;
 
     switch(pa) {
     case FLTLBASE:
-        return flt[0];
+        val = flt[0];
+        break;
     case FLTHBASE:
-        return (flt[1] & FLT_MSK) | mem_size(0);
+        val = (flt[1] & FLT_MSK) | mem_size(0);
+        break;
     case FLTHBASE + 4:
-        return (flt[1] & FLT_MSK) | mem_size(1);
+        val = (flt[1] & FLT_MSK) | mem_size(1);
+        break;
     case FLTHBASE + 8:
-        return (flt[1] & FLT_MSK) | mem_size(2);
+        val = (flt[1] & FLT_MSK) | mem_size(2);
+        break;
     case FLTHBASE + 12:
-        return (flt[1] & FLT_MSK) | mem_size(3);
+        val = (flt[1] & FLT_MSK) | mem_size(3);
+        break;
     default:
         sim_debug(EXECUTE_MSG, &flt_dev,
                   "Read from FLT Register at %x: FAILURE, NO DATA!!!!\n",
                   pa);
-        return 0;
+        val = 0;
     }
+
+    sim_debug(EXECUTE_MSG, &flt_dev,
+              "Read from FLT Register at %x, val=%08x\n",
+              pa, val);
+
+    return val;
 }
 
 void flt_write(uint32 pa, uint32 val, size_t size)

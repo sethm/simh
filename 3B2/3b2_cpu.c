@@ -2924,6 +2924,8 @@ t_stat sim_instr(void)
             break;
         case MVERNO:
             R[0] = CPU_VERSION;
+            sim_debug(READ_MSG, &cpu_dev,
+                      "CPU VERSION: 0x%02x\n", R[0]);
             break;
         case ENBVJMP:
             if (cpu_execution_level() != EX_LVL_KERN) {
